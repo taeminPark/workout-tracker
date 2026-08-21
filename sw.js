@@ -1,4 +1,4 @@
-const CACHE = "wt-cache-v2";
+const CACHE = "wt-cache-v3";
 const ASSETS = [
   "./",
   "./index.html",
@@ -23,20 +23,18 @@ self.addEventListener("activate", (e) => {
   self.clients.claim();
 });
 
+// network-first: always try to fetch the latest version when online,
+// only fall back to the cached copy when offline (e.g. no signal in the gym).
 self.addEventListener("fetch", (e) => {
   if (e.request.method !== "GET") return;
   if (e.request.url.includes("api.github.com")) return;
   e.respondWith(
-    caches.match(e.request).then(
-      (cached) =>
-        cached ||
-        fetch(e.request)
-          .then((res) => {
-            const copy = res.clone();
-            caches.open(CACHE).then((c) => c.put(e.request, copy));
-            return res;
-          })
-          .catch(() => cached)
-    )
+    fetch(e.request)
+      .then((res) => {
+        const copy = res.clone();
+        caches.open(CACHE).then((c) => c.put(e.request, copy));
+        return res;
+      })
+      .catch(() => caches.match(e.request))
   );
 });
