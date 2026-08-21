@@ -14,9 +14,9 @@
   --red-press: #d6291f;
   --orange: #ff9f0a;
   --purple: #bf5af2;
-  --r-lg: 22px;
-  --r-md: 16px;
-  --r-sm: 12px;
+  --r-lg: 14px;
+  --r-md: 10px;
+  --r-sm: 8px;
   --fast: 0.09s cubic-bezier(0.2, 0.8, 0.4, 1);
 }
 
@@ -84,7 +84,7 @@ body {
   justify-content: center;
   transition: background var(--fast), transform var(--fast);
 }
-.iconbtn:active {
+.iconbtn:active, .iconbtn.pressed {
   background: var(--bg-elev-press);
   transform: scale(0.92);
 }
@@ -110,10 +110,11 @@ body {
   white-space: nowrap;
   transition: background var(--fast), transform var(--fast);
 }
-.quickrow .pill:active {
+.quickrow .pill:active, .quickrow .pill.pressed {
   background: var(--bg-elev-press);
   transform: scale(0.96);
 }
+.quickrow .pill .icon-svg { width: 15px; height: 15px; }
 
 /* ---------- grids / buttons ---------- */
 
@@ -153,7 +154,7 @@ body {
   line-height: 1.3;
   transition: background var(--fast), transform var(--fast), filter var(--fast);
 }
-.big-btn:active {
+.big-btn:active, .big-btn.pressed {
   background: var(--bg-elev-press);
   transform: scale(0.96);
   filter: brightness(1.15);
@@ -164,14 +165,14 @@ body {
   border-color: var(--accent);
   color: #fff;
 }
-.big-btn.accent:active { background: var(--accent-press); }
+.big-btn.accent:active, .big-btn.accent.pressed { background: var(--accent-press); }
 
 .big-btn.ghost {
   background: transparent;
   border: 1.5px dashed var(--border);
   color: var(--text-2);
 }
-.big-btn.ghost:active { background: var(--bg-elev); }
+.big-btn.ghost:active, .big-btn.ghost.pressed { background: var(--bg-elev); }
 
 .num-grid {
   display: grid;
@@ -216,7 +217,7 @@ body {
 .stepper-btn {
   width: 82px;
   height: 82px;
-  border-radius: 50%;
+  border-radius: var(--r-lg);
   border: 1px solid var(--border);
   background: var(--bg-elev);
   color: var(--text);
@@ -224,7 +225,7 @@ body {
   font-weight: 600;
   transition: background var(--fast), transform var(--fast), filter var(--fast);
 }
-.stepper-btn:active {
+.stepper-btn:active, .stepper-btn.pressed {
   background: var(--bg-elev-press);
   transform: scale(0.9);
   filter: brightness(1.2);
@@ -243,7 +244,7 @@ body {
   margin-top: 6px;
   transition: background var(--fast), transform var(--fast), filter var(--fast);
 }
-.confirm-btn:active {
+.confirm-btn:active, .confirm-btn.pressed {
   background: var(--green-press);
   transform: scale(0.97);
   filter: brightness(1.1);
@@ -281,9 +282,27 @@ body {
   font-size: 17px;
   transition: background var(--fast), transform var(--fast);
 }
-.set-row[data-action]:active { background: var(--bg-elev-press); transform: scale(0.98); }
+.set-row[data-action]:active, .set-row[data-action].pressed { background: var(--bg-elev-press); transform: scale(0.98); }
 .set-row .set-idx { color: var(--text-3); font-size: 13px; font-weight: 600; }
 .set-row .set-val { font-weight: 700; font-variant-numeric: tabular-nums; }
+.set-row .row-right { display: flex; align-items: center; gap: 10px; }
+
+.row-del {
+  background: rgba(255, 69, 58, 0.16);
+  color: var(--red);
+  border: none;
+  border-radius: var(--r-sm);
+  width: 30px;
+  height: 30px;
+  font-size: 14px;
+  font-weight: 700;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--fast), transform var(--fast);
+}
+.row-del:active, .row-del.pressed { background: rgba(255, 69, 58, 0.3); transform: scale(0.9); }
 
 .footer-actions { display: flex; flex-direction: column; gap: 10px; margin-top: auto; padding-top: 16px; }
 
@@ -297,8 +316,9 @@ body {
   color: var(--text-2);
 }
 .today-box h3 { margin: 0 0 8px; font-size: 12px; font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; }
-.today-box .entry { display: flex; justify-content: space-between; padding: 5px 0; }
-.today-box .entry span:first-child { color: var(--text); font-weight: 600; }
+.today-box .entry { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; }
+.today-box .entry .entry-name { color: var(--text); font-weight: 600; }
+.today-box .entry .entry-right { display: flex; align-items: center; gap: 8px; }
 
 .form-row { margin-bottom: 16px; }
 .form-row label { display: block; font-size: 13px; font-weight: 600; color: var(--text-2); margin-bottom: 6px; }
@@ -362,13 +382,15 @@ body {
   font-weight: 600;
   transition: background var(--fast), transform var(--fast);
 }
-.manage-row .del-btn:active { background: rgba(255, 69, 58, 0.3); transform: scale(0.94); }
+.manage-row .del-btn:active, .manage-row .del-btn.pressed { background: rgba(255, 69, 58, 0.3); transform: scale(0.94); }
 
 .sync-status { font-size: 13px; color: var(--text-3); text-align: center; margin-top: 10px; }
 .sync-status.ok { color: var(--green); }
 .sync-status.err { color: var(--red); }
 
 .spacer { flex: 1; }
+
+.icon-svg { display: inline-block; vertical-align: -3px; flex-shrink: 0; }
 
 /* ---------- calendar ---------- */
 
@@ -425,15 +447,26 @@ body {
 .cal-cell.today { box-shadow: inset 0 0 0 1.5px var(--accent); }
 .cal-cell.selected { background: var(--accent); color: #fff; }
 .cal-cell.selected::after { background: #fff; }
-.cal-cell:active { background: var(--bg-elev-press); transform: scale(0.9); }
+.cal-cell:active, .cal-cell.pressed { background: var(--bg-elev-press); transform: scale(0.9); }
 
 .day-detail {
   margin-top: 18px;
   padding-top: 16px;
   border-top: 1px solid var(--border);
 }
-.day-detail h3 { font-size: 15px; font-weight: 700; margin: 0 0 10px; }
+.day-detail h3 { font-size: 15px; font-weight: 700; margin: 0 0 10px; display: flex; justify-content: space-between; align-items: center; }
 .day-detail .empty-msg { color: var(--text-3); font-size: 14px; text-align: center; padding: 20px 0; }
+.day-detail .add-log-btn {
+  background: var(--bg-elev);
+  border: 1.5px dashed var(--border);
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 700;
+  padding: 8px 14px;
+  border-radius: var(--r-sm);
+  transition: background var(--fast), transform var(--fast);
+}
+.day-detail .add-log-btn:active, .day-detail .add-log-btn.pressed { background: var(--bg-elev-press); transform: scale(0.95); }
 
 /* ---------- coaching ---------- */
 
@@ -445,7 +478,7 @@ body {
   margin-bottom: 14px;
   transition: transform var(--fast), filter var(--fast);
 }
-.coach-teaser[data-action]:active { transform: scale(0.98); filter: brightness(1.1); }
+.coach-teaser[data-action]:active, .coach-teaser[data-action].pressed { transform: scale(0.98); filter: brightness(1.1); }
 .coach-teaser h3 { margin: 0 0 4px; font-size: 13px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; }
 .coach-teaser p { margin: 0; font-size: 14px; color: var(--text-2); line-height: 1.4; }
 

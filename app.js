@@ -1,5 +1,9 @@
 "use strict";
 
+/* ---------- icons ---------- */
+
+const ICON_DUMBBELL = `<svg class="icon-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="1" y="9" width="3" height="6" rx="1"/><rect x="4.5" y="7" width="3" height="10" rx="1"/><line x1="8" y1="12" x2="16" y2="12"/><rect x="16.5" y="7" width="3" height="10" rx="1"/><rect x="20" y="9" width="3" height="6" rx="1"/></svg>`;
+
 /* ---------- storage helpers ---------- */
 
 const LS = {
@@ -109,6 +113,7 @@ let S = {
   calSelected: null,
   aiLoading: false,
   aiError: null,
+  logTargetDate: null,
 };
 
 const WEIGHT_STEP = 2.5;
@@ -125,8 +130,8 @@ function resetSession() {
 
 function commitExercise() {
   if (!S.currentExercise || S.sets.length === 0) return;
+  const key = S.logTargetDate || todayKey();
   const logs = getLogs();
-  const key = todayKey();
   if (!logs[key]) logs[key] = [];
   logs[key].push({
     exerciseId: S.currentExercise.id,
@@ -136,10 +141,12 @@ function commitExercise() {
   });
   saveLogs(logs);
 
-  const lastUsed = getLastUsed();
-  const last = S.sets[S.sets.length - 1];
-  lastUsed[S.currentExercise.id] = { weight: last.weight, reps: last.reps };
-  saveLastUsed(lastUsed);
+  if (key === todayKey()) {
+    const lastUsed = getLastUsed();
+    const last = S.sets[S.sets.length - 1];
+    lastUsed[S.currentExercise.id] = { weight: last.weight, reps: last.reps };
+    saveLastUsed(lastUsed);
+  }
 
   syncToGitHub();
 }
@@ -222,8 +229,26 @@ function editSet(index) {
 }
 
 function finishExercise() {
+  const targetDate = S.logTargetDate;
   commitExercise();
-  goHome();
+  if (targetDate) {
+    resetSession();
+    const [y, m] = targetDate.split("-").map(Number);
+    S.calYear = y;
+    S.calMonth = m - 1;
+    S.calSelected = targetDate;
+    S.logTargetDate = null;
+    S.screen = "calendar";
+    render();
+  } else {
+    goHome();
+  }
+}
+
+function startBackfill() {
+  S.logTargetDate = S.calSelected;
+  S.screen = "backfillpick";
+  render();
 }
 
 /* ---------- calendar ---------- */
@@ -538,6 +563,7 @@ function render() {
   if (S.screen === "calendar") return renderCalendar();
   if (S.screen === "coaching") return renderCoaching();
   if (S.screen === "aicoaching") return renderAICoaching();
+  if (S.screen === "backfillpick") return renderBackfillPick();
 }
 
 function renderTopbar(title, opts) {
@@ -596,10 +622,14 @@ function renderHome() {
         <h3>오늘 기록</h3>
         ${today
           .map(
-            (e) => h`
-          <div class="entry"><span>${esc(e.exerciseName)}</span><span>${esc(
-              summarizeEntry(e)
-            )}</span></div>
+            (e, i) => h`
+          <div class="entry">
+            <span class="entry-name">${esc(e.exerciseName)}</span>
+            <span class="entry-right">
+              <span>${esc(summarizeEntry(e))}</span>
+              <button class="row-del" data-action="del-log-entry" data-date="${todayKey()}" data-idx="${i}">✕</button>
+            </span>
+          </div>
         `
           )
           .join("")}
@@ -610,7 +640,7 @@ function renderHome() {
   const quickrow = h`
     <div class="quickrow">
       <button class="pill" data-action="calendar">📅 운동일정</button>
-      <button class="pill" data-action="manage">⚙️ 종목설정</button>
+      <button class="pill" data-action="manage">${ICON_DUMBBELL} 종목설정</button>
       <button class="pill" data-action="open-ai-coaching">🤖 AI 코칭</button>
     </div>
   `;
@@ -650,6 +680,27 @@ function renderHome() {
     ${todayHtml}
     <div class="grid">${gridHtml}</div>
     ${syncLine}
+  `;
+}
+
+function renderBackfillPick() {
+  const exercises = getExercises();
+  const cats = [...new Set(exercises.map((e) => e.cat))];
+  let gridHtml = "";
+  cats.forEach((cat) => {
+    gridHtml += `<div class="category-label">${esc(cat)}</div>`;
+    exercises
+      .filter((e) => e.cat === cat)
+      .forEach((e) => {
+        gridHtml += `<button class="big-btn" data-action="pick-exercise" data-id="${esc(
+          e.id
+        )}">${esc(e.name)}</button>`;
+      });
+  });
+  const label = S.logTargetDate.replace(/-/g, ". ");
+  app.innerHTML = h`
+    ${renderTopbar(`${label} 기록 추가`, { onBack: true })}
+    <div class="grid">${gridHtml}</div>
   `;
 }
 
@@ -890,24 +941,28 @@ function renderCalendar() {
   if (S.calSelected) {
     const entries = logs[S.calSelected] || [];
     const label = S.calSelected.replace(/-/g, ". ");
+    const addBtn = `<button class="add-log-btn" data-action="backfill-start">+ 이 날짜에 기록 추가</button>`;
     if (entries.length === 0) {
       detailHtml = h`
         <div class="day-detail">
-          <h3>${esc(label)}</h3>
+          <h3>${esc(label)} ${addBtn}</h3>
           <div class="empty-msg">기록이 없습니다</div>
         </div>
       `;
     } else {
       detailHtml = h`
         <div class="day-detail">
-          <h3>${esc(label)}</h3>
+          <h3>${esc(label)} ${addBtn}</h3>
           <div class="set-list">
             ${entries
               .map(
-                (e) => h`
+                (e, i) => h`
               <div class="set-row">
                 <span class="set-idx">${esc(e.exerciseName)}</span>
-                <span class="set-val">${esc(summarizeEntry(e))}</span>
+                <span class="row-right">
+                  <span class="set-val">${esc(summarizeEntry(e))}</span>
+                  <button class="row-del" data-action="del-log-entry" data-date="${S.calSelected}" data-idx="${i}">✕</button>
+                </span>
               </div>
             `
               )
@@ -991,6 +1046,23 @@ app.addEventListener("click", (e) => {
     case "cal-pick-day":
       calPickDay(el.dataset.key);
       break;
+    case "backfill-start":
+      startBackfill();
+      break;
+    case "del-log-entry": {
+      const date = el.dataset.date;
+      const idx = Number(el.dataset.idx);
+      if (!confirm("이 기록을 삭제할까요?")) break;
+      const logs = getLogs();
+      if (logs[date]) {
+        logs[date].splice(idx, 1);
+        if (logs[date].length === 0) delete logs[date];
+        saveLogs(logs);
+        syncToGitHub();
+      }
+      render();
+      break;
+    }
     case "open-coaching":
       S.screen = "coaching";
       render();
@@ -1111,6 +1183,10 @@ function handleBack() {
     S.screen = "setcount";
     S.sets = [];
     render();
+  } else if (S.screen === "backfillpick") {
+    S.logTargetDate = null;
+    S.screen = "calendar";
+    render();
   } else if (
     S.screen === "manage" ||
     S.screen === "settings" ||
@@ -1122,6 +1198,25 @@ function handleBack() {
     render();
   }
 }
+
+/* ---------- press feedback (iOS Safari doesn't reliably fire :active on tap) ---------- */
+
+const PRESSABLE = ".big-btn, .confirm-btn, .stepper-btn, .iconbtn, .quickrow .pill, .del-btn, .cal-cell, .set-row[data-action], .coach-teaser[data-action], .row-del, .add-log-btn";
+
+function clearPressed() {
+  document.querySelectorAll(".pressed").forEach((el) => el.classList.remove("pressed"));
+}
+document.addEventListener(
+  "pointerdown",
+  (e) => {
+    const el = e.target.closest(PRESSABLE);
+    if (el) el.classList.add("pressed");
+  },
+  { passive: true }
+);
+document.addEventListener("pointerup", clearPressed, { passive: true });
+document.addEventListener("pointercancel", clearPressed, { passive: true });
+document.addEventListener("pointerleave", clearPressed, true);
 
 /* ---------- service worker ---------- */
 
