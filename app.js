@@ -73,12 +73,19 @@ function saveSettings(s) {
   saveJSON(LS.settings, s);
 }
 
-function todayKey() {
-  const d = new Date();
+function dateKey(d) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+function todayKey() {
+  return dateKey(new Date());
+}
+function daysAgoKey(n) {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return dateKey(d);
 }
 
 /* ---------- app state ---------- */
@@ -93,6 +100,9 @@ let S = {
   phase: "weight", // 'weight' | 'reps'
   draftWeight: 20,
   draftReps: 8,
+  calYear: new Date().getFullYear(),
+  calMonth: new Date().getMonth(),
+  calSelected: null,
 };
 
 const WEIGHT_STEP = 2.5;
@@ -210,6 +220,159 @@ function finishExercise() {
   goHome();
 }
 
+/* ---------- calendar ---------- */
+
+function goCalendar() {
+  const now = new Date();
+  S.calYear = now.getFullYear();
+  S.calMonth = now.getMonth();
+  S.calSelected = null;
+  S.screen = "calendar";
+  render();
+}
+
+function calShiftMonth(delta) {
+  let m = S.calMonth + delta;
+  let y = S.calYear;
+  if (m < 0) {
+    m = 11;
+    y -= 1;
+  } else if (m > 11) {
+    m = 0;
+    y += 1;
+  }
+  S.calMonth = m;
+  S.calYear = y;
+  S.calSelected = null;
+  render();
+}
+
+function calPickDay(key) {
+  S.calSelected = S.calSelected === key ? null : key;
+  render();
+}
+
+/* ---------- weekly coaching ---------- */
+
+function estOneRM(weight, reps) {
+  return weight * (1 + reps / 30);
+}
+
+function collectRange(fromDaysAgo, toDaysAgo) {
+  const logs = getLogs();
+  const exercises = getExercises();
+  const map = {};
+  for (let offset = toDaysAgo; offset <= fromDaysAgo; offset++) {
+    const key = daysAgoKey(offset);
+    const entries = logs[key];
+    if (!entries) continue;
+    entries.forEach((entry) => {
+      if (!map[entry.exerciseId]) {
+        const meta = exercises.find((x) => x.id === entry.exerciseId);
+        map[entry.exerciseId] = {
+          name: entry.exerciseName,
+          cat: meta ? meta.cat : null,
+          volume: 0,
+          bestE1RM: 0,
+        };
+      }
+      entry.sets.forEach((s) => {
+        map[entry.exerciseId].volume += s.weight * s.reps;
+        const e1 = estOneRM(s.weight, s.reps);
+        if (e1 > map[entry.exerciseId].bestE1RM) map[entry.exerciseId].bestE1RM = e1;
+      });
+    });
+  }
+  return map;
+}
+
+const COACH_ICON = { up: "💪", down: "📉", flat: "➖", missing: "⏸️", new: "🆕" };
+
+function generateCoaching() {
+  const thisWeek = collectRange(6, 0);
+  const lastWeek = collectRange(13, 7);
+  const hasThis = Object.keys(thisWeek).length > 0;
+  const hasLast = Object.keys(lastWeek).length > 0;
+
+  if (!hasLast) {
+    return {
+      status: hasThis ? "building" : "no-data",
+      items: [],
+      summary: hasThis
+        ? "이번 주 기록이 쌓이고 있어요. 한 주가 더 지나면 지난주와 비교한 코칭이 시작돼요."
+        : null,
+    };
+  }
+
+  const ids = new Set([...Object.keys(thisWeek), ...Object.keys(lastWeek)]);
+  const items = [];
+  ids.forEach((id) => {
+    const t = thisWeek[id];
+    const l = lastWeek[id];
+    const name = (t || l).name;
+    if (t && l) {
+      const diff = ((t.bestE1RM - l.bestE1RM) / l.bestE1RM) * 100;
+      if (diff > 2) {
+        items.push({
+          type: "up",
+          name,
+          msg: `지난주보다 향상됐어요 (추정 1RM ${Math.round(l.bestE1RM)}→${Math.round(
+            t.bestE1RM
+          )}kg). 이 흐름 그대로 유지하세요.`,
+        });
+      } else if (diff < -2) {
+        items.push({
+          type: "down",
+          name,
+          msg: `지난주보다 낮아졌어요. 폼과 회복 상태를 점검하고, 무게를 살짝 낮춰 안정적으로 가져가보세요.`,
+        });
+      } else {
+        items.push({
+          type: "flat",
+          name,
+          msg: `2주째 비슷한 수준이에요. 다음엔 무게 +2.5kg 또는 반복 +1~2회에 도전해보세요.`,
+        });
+      }
+    } else if (l && !t) {
+      items.push({ type: "missing", name, msg: `이번 주엔 쉬셨네요. 다음 주엔 꼭 챙겨보세요.` });
+    } else {
+      items.push({ type: "new", name, msg: `새로 시작한 종목이에요. 다음 주 흐름을 지켜볼게요.` });
+    }
+  });
+
+  const exercises = getExercises();
+  const allCats = [...new Set(exercises.map((e) => e.cat))];
+  const trainedCats = new Set(
+    [...Object.values(thisWeek), ...Object.values(lastWeek)].map((v) => v.cat).filter(Boolean)
+  );
+  const untouched = allCats.filter((c) => !trainedCats.has(c));
+  if (untouched.length > 0 && untouched.length < allCats.length) {
+    items.push({
+      type: "missing",
+      name: "부위 밸런스",
+      msg: `최근 2주간 ${untouched.join(", ")} 부위를 안 하셨어요. 다음 주엔 추가해서 균형을 맞춰보세요.`,
+    });
+  }
+
+  const totalThis = Object.values(thisWeek).reduce((a, v) => a + v.volume, 0);
+  const totalLast = Object.values(lastWeek).reduce((a, v) => a + v.volume, 0);
+  let summary;
+  if (totalLast === 0) {
+    summary = `이번 주 총 볼륨 ${Math.round(totalThis).toLocaleString()}kg.`;
+  } else {
+    const pct = Math.round(((totalThis - totalLast) / totalLast) * 100);
+    const arrow = pct > 0 ? "▲" : pct < 0 ? "▼" : "-";
+    summary = `이번 주 총 볼륨 ${Math.round(totalThis).toLocaleString()}kg (지난주 대비 ${arrow} ${Math.abs(
+      pct
+    )}%)`;
+  }
+
+  const order = { up: 0, down: 1, missing: 2, flat: 3, new: 4 };
+  items.sort((a, b) => order[a.type] - order[b.type]);
+
+  return { status: "ready", items, summary };
+}
+
 /* ---------- GitHub sync ---------- */
 
 function utf8ToB64(str) {
@@ -289,6 +452,8 @@ function render() {
   if (S.screen === "summary") return renderSummary();
   if (S.screen === "manage") return renderManage();
   if (S.screen === "settings") return renderSettings();
+  if (S.screen === "calendar") return renderCalendar();
+  if (S.screen === "coaching") return renderCoaching();
 }
 
 function renderTopbar(title, opts) {
@@ -301,17 +466,36 @@ function renderTopbar(title, opts) {
           : `<button class="iconbtn" data-action="settings">⚙</button>`
       }
       <h1>${esc(title)}</h1>
-      ${
-        opts.onManage
-          ? `<button class="iconbtn" data-action="manage">✎</button>`
-          : `<div style="width:44px"></div>`
-      }
+      <div style="width:40px"></div>
     </div>
   `;
 }
 
 function summarizeEntry(entry) {
   return entry.sets.map((s) => `${s.weight}×${s.reps}`).join(", ");
+}
+
+function coachingTeaserHtml() {
+  const c = generateCoaching();
+  if (c.status === "no-data") return "";
+  if (c.status === "building") {
+    return h`
+      <div class="coach-teaser">
+        <h3>주간 코칭</h3>
+        <p>${esc(c.summary)}</p>
+      </div>
+    `;
+  }
+  const preview = c.items.slice(0, 1);
+  return h`
+    <div class="coach-teaser" data-action="open-coaching">
+      <h3>주간 코칭 · ${c.items.length}개 항목</h3>
+      ${preview
+        .map((i) => `<p>${COACH_ICON[i.type]} ${esc(i.name)} — ${esc(i.msg)}</p>`)
+        .join("")}
+      <p style="margin-top:6px;color:var(--accent);font-weight:600;">전체 보기 ›</p>
+    </div>
+  `;
 }
 
 function renderHome() {
@@ -339,6 +523,13 @@ function renderHome() {
     `;
   }
 
+  const quickrow = h`
+    <div class="quickrow">
+      <button class="pill" data-action="calendar">📅 캘린더</button>
+      <button class="pill" data-action="manage">✎ 종목 관리</button>
+    </div>
+  `;
+
   let gridHtml = "";
   cats.forEach((cat) => {
     gridHtml += `<div class="category-label">${esc(cat)}</div>`;
@@ -365,7 +556,9 @@ function renderHome() {
   }
 
   app.innerHTML = h`
-    ${renderTopbar("운동 기록", { onManage: true })}
+    ${renderTopbar("운동 기록")}
+    ${quickrow}
+    ${coachingTeaserHtml()}
     ${todayHtml}
     <div class="grid">${gridHtml}</div>
     ${syncLine}
@@ -442,7 +635,7 @@ function renderManage() {
     .map(
       (e) => h`
     <div class="manage-row">
-      <span>${esc(e.name)} <span style="color:#64748b">· ${esc(e.cat)}</span></span>
+      <span>${esc(e.name)} <span style="color:var(--text-3)">· ${esc(e.cat)}</span></span>
       <button class="del-btn" data-action="del-exercise" data-id="${esc(e.id)}">삭제</button>
     </div>
   `
@@ -498,6 +691,104 @@ function renderSettings() {
   `;
 }
 
+const WEEKDAY_LABELS = ["일", "월", "화", "수", "목", "금", "토"];
+
+function renderCalendar() {
+  const logs = getLogs();
+  const y = S.calYear;
+  const m = S.calMonth;
+  const firstDow = new Date(y, m, 1).getDay();
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const today = todayKey();
+
+  let cells = "";
+  for (let i = 0; i < firstDow; i++) {
+    cells += `<div class="cal-cell empty"></div>`;
+  }
+  for (let day = 1; day <= daysInMonth; day++) {
+    const key = dateKey(new Date(y, m, day));
+    const hasLog = !!logs[key];
+    let cls = "cal-cell";
+    if (hasLog) cls += " has-log";
+    if (key === today) cls += " today";
+    if (key === S.calSelected) cls += " selected";
+    cells += `<div class="${cls}" data-action="cal-pick-day" data-key="${key}">${day}</div>`;
+  }
+
+  let detailHtml = "";
+  if (S.calSelected) {
+    const entries = logs[S.calSelected] || [];
+    const label = S.calSelected.replace(/-/g, ". ");
+    if (entries.length === 0) {
+      detailHtml = h`
+        <div class="day-detail">
+          <h3>${esc(label)}</h3>
+          <div class="empty-msg">기록이 없습니다</div>
+        </div>
+      `;
+    } else {
+      detailHtml = h`
+        <div class="day-detail">
+          <h3>${esc(label)}</h3>
+          <div class="set-list">
+            ${entries
+              .map(
+                (e) => h`
+              <div class="set-row">
+                <span class="set-idx">${esc(e.exerciseName)}</span>
+                <span class="set-val">${esc(summarizeEntry(e))}</span>
+              </div>
+            `
+              )
+              .join("")}
+          </div>
+        </div>
+      `;
+    }
+  }
+
+  app.innerHTML = h`
+    ${renderTopbar("캘린더", { onBack: true })}
+    <div class="cal-nav">
+      <button class="iconbtn" data-action="cal-prev">‹</button>
+      <span class="cal-month-label">${y}년 ${m + 1}월</span>
+      <button class="iconbtn" data-action="cal-next">›</button>
+    </div>
+    <div class="cal-weekdays">${WEEKDAY_LABELS.map((d) => `<span>${d}</span>`).join("")}</div>
+    <div class="cal-grid">${cells}</div>
+    ${detailHtml}
+  `;
+}
+
+function renderCoaching() {
+  const c = generateCoaching();
+  let body;
+  if (c.status !== "ready") {
+    body = `<div class="coach-summary">${esc(
+      c.summary || "아직 코칭을 만들 만큼 기록이 쌓이지 않았어요."
+    )}</div>`;
+  } else {
+    body = h`
+      <div class="coach-summary">${esc(c.summary)}</div>
+      ${c.items
+        .map(
+          (i) => h`
+        <div class="coach-item ${i.type}">
+          <div class="coach-name">${COACH_ICON[i.type]} ${esc(i.name)}</div>
+          <div class="coach-msg">${esc(i.msg)}</div>
+        </div>
+      `
+        )
+        .join("")}
+    `;
+  }
+
+  app.innerHTML = h`
+    ${renderTopbar("주간 코칭", { onBack: true })}
+    ${body}
+  `;
+}
+
 /* ---------- event delegation ---------- */
 
 app.addEventListener("click", (e) => {
@@ -515,6 +806,22 @@ app.addEventListener("click", (e) => {
       break;
     case "manage":
       S.screen = "manage";
+      render();
+      break;
+    case "calendar":
+      goCalendar();
+      break;
+    case "cal-prev":
+      calShiftMonth(-1);
+      break;
+    case "cal-next":
+      calShiftMonth(1);
+      break;
+    case "cal-pick-day":
+      calPickDay(el.dataset.key);
+      break;
+    case "open-coaching":
+      S.screen = "coaching";
       render();
       break;
     case "pick-exercise": {
@@ -607,7 +914,12 @@ function handleBack() {
     S.screen = "setcount";
     S.sets = [];
     render();
-  } else if (S.screen === "manage" || S.screen === "settings") {
+  } else if (
+    S.screen === "manage" ||
+    S.screen === "settings" ||
+    S.screen === "calendar" ||
+    S.screen === "coaching"
+  ) {
     S.screen = "home";
     render();
   }
