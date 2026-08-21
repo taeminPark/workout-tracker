@@ -7,26 +7,27 @@ const LS = {
   lastUsed: "wt_lastused",
   logs: "wt_logs",
   settings: "wt_settings",
+  aiCoach: "wt_ai_coach",
 };
 
 const DEFAULT_EXERCISES = [
-  { id: "bench_press", name: "벤치프레스", cat: "가슴" },
-  { id: "incline_bench", name: "인클라인 벤치프레스", cat: "가슴" },
-  { id: "dumbbell_press", name: "덤벨 프레스", cat: "가슴" },
-  { id: "dips", name: "딥스", cat: "가슴" },
-  { id: "deadlift", name: "데드리프트", cat: "등" },
-  { id: "barbell_row", name: "바벨로우", cat: "등" },
-  { id: "lat_pulldown", name: "랫풀다운", cat: "등" },
-  { id: "pullup", name: "풀업", cat: "등" },
-  { id: "squat", name: "스쿼트", cat: "하체" },
-  { id: "leg_press", name: "레그프레스", cat: "하체" },
-  { id: "lunge", name: "런지", cat: "하체" },
-  { id: "leg_curl", name: "레그컬", cat: "하체" },
-  { id: "overhead_press", name: "오버헤드프레스", cat: "어깨" },
-  { id: "lateral_raise", name: "사이드레터럴레이즈", cat: "어깨" },
-  { id: "face_pull", name: "페이스풀", cat: "어깨" },
-  { id: "barbell_curl", name: "바벨컬", cat: "팔" },
-  { id: "triceps_ext", name: "트라이셉스 익스텐션", cat: "팔" },
+  { id: "bench_press", name: "벤치프레스", cat: "가슴", startWeight: 20 },
+  { id: "incline_bench", name: "인클라인 벤치프레스", cat: "가슴", startWeight: 20 },
+  { id: "dumbbell_press", name: "덤벨 프레스", cat: "가슴", startWeight: 20 },
+  { id: "dips", name: "딥스", cat: "가슴", startWeight: 20 },
+  { id: "deadlift", name: "데드리프트", cat: "등", startWeight: 20 },
+  { id: "barbell_row", name: "바벨로우", cat: "등", startWeight: 20 },
+  { id: "lat_pulldown", name: "랫풀다운", cat: "등", startWeight: 20 },
+  { id: "pullup", name: "풀업", cat: "등", startWeight: 20 },
+  { id: "squat", name: "스쿼트", cat: "하체", startWeight: 20 },
+  { id: "leg_press", name: "레그프레스", cat: "하체", startWeight: 20 },
+  { id: "lunge", name: "런지", cat: "하체", startWeight: 20 },
+  { id: "leg_curl", name: "레그컬", cat: "하체", startWeight: 20 },
+  { id: "overhead_press", name: "오버헤드프레스", cat: "어깨", startWeight: 20 },
+  { id: "lateral_raise", name: "사이드레터럴레이즈", cat: "어깨", startWeight: 20 },
+  { id: "face_pull", name: "페이스풀", cat: "어깨", startWeight: 20 },
+  { id: "barbell_curl", name: "바벨컬", cat: "팔", startWeight: 20 },
+  { id: "triceps_ext", name: "트라이셉스 익스텐션", cat: "팔", startWeight: 20 },
 ];
 
 function loadJSON(key, fallback) {
@@ -61,12 +62,15 @@ function saveLogs(obj) {
 }
 function getSettings() {
   return loadJSON(LS.settings, {
+    appTitle: "운동 기록",
     token: "",
     owner: "taeminPark",
     repo: "workout-data",
     path: "log.json",
     lastSync: null,
     lastSyncOk: null,
+    geminiKey: "",
+    geminiModel: "gemini-2.0-flash",
   });
 }
 function saveSettings(s) {
@@ -103,6 +107,8 @@ let S = {
   calYear: new Date().getFullYear(),
   calMonth: new Date().getMonth(),
   calSelected: null,
+  aiLoading: false,
+  aiError: null,
 };
 
 const WEIGHT_STEP = 2.5;
@@ -165,7 +171,7 @@ function defaultsForIndex(index) {
   const lastUsed = getLastUsed();
   const remembered = lastUsed[S.currentExercise.id];
   if (remembered) return { weight: remembered.weight, reps: remembered.reps };
-  return { weight: 20, reps: 8 };
+  return { weight: S.currentExercise.startWeight ?? 20, reps: 8 };
 }
 
 function startSet(index, mode) {
@@ -373,6 +379,85 @@ function generateCoaching() {
   return { status: "ready", items, summary };
 }
 
+/* ---------- AI coaching (Gemini) ---------- */
+
+function getAICoachCache() {
+  return loadJSON(LS.aiCoach, null);
+}
+function saveAICoachCache(obj) {
+  saveJSON(LS.aiCoach, obj);
+}
+
+function buildWeeklyDataText() {
+  const thisWeek = collectRange(6, 0);
+  const lastWeek = collectRange(13, 7);
+  const lines = [`오늘 날짜: ${todayKey()}`, "", "[이번 주 (최근 7일) 운동 기록]"];
+  if (Object.keys(thisWeek).length === 0) lines.push("- 기록 없음");
+  Object.values(thisWeek).forEach((v) => {
+    lines.push(`- ${v.name} (${v.cat || "기타"}): 총 볼륨 ${Math.round(v.volume)}kg, 추정 1RM ${Math.round(v.bestE1RM)}kg`);
+  });
+  lines.push("", "[지난 주 (8~14일 전) 운동 기록]");
+  if (Object.keys(lastWeek).length === 0) lines.push("- 기록 없음");
+  Object.values(lastWeek).forEach((v) => {
+    lines.push(`- ${v.name} (${v.cat || "기타"}): 총 볼륨 ${Math.round(v.volume)}kg, 추정 1RM ${Math.round(v.bestE1RM)}kg`);
+  });
+  return lines.join("\n");
+}
+
+function buildGeminiPrompt() {
+  const data = buildWeeklyDataText();
+  return `당신은 전문 웨이트 트레이닝 코치입니다. 아래는 회원의 최근 2주간 운동 기록 요약입니다 (볼륨=무게×횟수 합, 1RM은 Epley 공식 추정치).
+
+${data}
+
+이 데이터를 바탕으로 한국어로 다음 내용을 작성해주세요:
+1. 이번 주 총평 (2~3문장)
+2. 종목별 코멘트 (눈에 띄는 변화가 있는 종목 위주로, 각 1~2문장)
+3. 다음 주 운동 방향 제안 (구체적인 무게/횟수/부위 조언 포함, 불릿 3~5개)
+
+과도하게 formal하지 않게, 친근하지만 전문적인 트레이너 톤으로 작성하세요. 전체 400~600자 내외로 간결하게, 마크다운 헤더(##) 없이 자연스러운 문단과 "-"로 시작하는 불릿만 사용하세요.`;
+}
+
+async function callGemini(promptText) {
+  const s = getSettings();
+  const key = s.geminiKey;
+  if (!key) throw new Error("MISSING_KEY");
+  const model = s.geminiModel || "gemini-2.0-flash";
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
+    key
+  )}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ contents: [{ parts: [{ text: promptText }] }] }),
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`Gemini 호출 실패 (${res.status}) ${t.slice(0, 150)}`);
+  }
+  const data = await res.json();
+  const text = (data.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("");
+  if (!text) throw new Error("Gemini 응답에 텍스트가 없습니다");
+  return text.trim();
+}
+
+async function generateAICoaching() {
+  const rule = generateCoaching();
+  if (rule.status !== "ready") return;
+
+  S.aiLoading = true;
+  S.aiError = null;
+  render();
+  try {
+    const text = await callGemini(buildGeminiPrompt());
+    saveAICoachCache({ date: todayKey(), text, generatedAt: Date.now() });
+  } catch (e) {
+    S.aiError = e.message === "MISSING_KEY" ? "MISSING_KEY" : String(e.message || e);
+  }
+  S.aiLoading = false;
+  render();
+}
+
 /* ---------- GitHub sync ---------- */
 
 function utf8ToB64(str) {
@@ -454,6 +539,7 @@ function render() {
   if (S.screen === "settings") return renderSettings();
   if (S.screen === "calendar") return renderCalendar();
   if (S.screen === "coaching") return renderCoaching();
+  if (S.screen === "aicoaching") return renderAICoaching();
 }
 
 function renderTopbar(title, opts) {
@@ -525,8 +611,9 @@ function renderHome() {
 
   const quickrow = h`
     <div class="quickrow">
-      <button class="pill" data-action="calendar">📅 캘린더</button>
-      <button class="pill" data-action="manage">✎ 종목 관리</button>
+      <button class="pill" data-action="calendar">📅 운동일정</button>
+      <button class="pill" data-action="manage">⚙️ 종목설정</button>
+      <button class="pill" data-action="open-ai-coaching">🤖 AI 코칭</button>
     </div>
   `;
 
@@ -555,8 +642,11 @@ function renderHome() {
     }
   }
 
+  const appTitle = settings.appTitle || "운동 기록";
+  document.title = appTitle;
+
   app.innerHTML = h`
-    ${renderTopbar("운동 기록")}
+    ${renderTopbar(appTitle)}
     ${quickrow}
     ${coachingTeaserHtml()}
     ${todayHtml}
@@ -635,7 +725,13 @@ function renderManage() {
     .map(
       (e) => h`
     <div class="manage-row">
-      <span>${esc(e.name)} <span style="color:var(--text-3)">· ${esc(e.cat)}</span></span>
+      <span class="manage-name">${esc(e.name)} <span style="color:var(--text-3)">· ${esc(e.cat)}</span></span>
+      <div class="manage-weight">
+        <input type="number" inputmode="decimal" step="2.5" min="0"
+          class="weight-input" data-action="set-start-weight" data-id="${esc(e.id)}"
+          value="${e.startWeight ?? 20}" />
+        <span class="unit-sm">kg</span>
+      </div>
       <button class="del-btn" data-action="del-exercise" data-id="${esc(e.id)}">삭제</button>
     </div>
   `
@@ -643,7 +739,7 @@ function renderManage() {
     .join("");
 
   app.innerHTML = h`
-    ${renderTopbar("종목 관리", { onBack: true })}
+    ${renderTopbar("종목설정", { onBack: true })}
     <div class="set-list">${rows}</div>
     <div class="form-row">
       <label>새 종목 이름</label>
@@ -653,6 +749,10 @@ function renderManage() {
       <label>분류</label>
       <input id="new-ex-cat" type="text" placeholder="예: 하체" value="기타" />
     </div>
+    <div class="form-row">
+      <label>시작 무게 (kg)</label>
+      <input id="new-ex-weight" type="number" inputmode="decimal" step="2.5" min="0" value="20" />
+    </div>
     <button class="confirm-btn" data-action="add-exercise">추가</button>
   `;
 }
@@ -660,7 +760,28 @@ function renderManage() {
 function renderSettings() {
   const s = getSettings();
   app.innerHTML = h`
-    ${renderTopbar("설정 · GitHub 백업", { onBack: true })}
+    ${renderTopbar("설정", { onBack: true })}
+
+    <div class="category-label" style="margin-top:0">앱</div>
+    <div class="form-row">
+      <label>앱 제목</label>
+      <input id="set-title" type="text" placeholder="운동 기록" value="${esc(s.appTitle || "운동 기록")}" />
+    </div>
+
+    <div class="category-label" style="text-transform:none">AI 코칭 · Gemini</div>
+    <div class="form-row">
+      <label>Gemini API Key</label>
+      <input id="set-gemini-key" type="password" placeholder="AIza..." value="${esc(s.geminiKey || "")}" />
+    </div>
+    <div class="form-row">
+      <label>모델</label>
+      <input id="set-gemini-model" type="text" value="${esc(s.geminiModel || "gemini-2.0-flash")}" />
+    </div>
+    <div class="sync-status" style="text-align:left;margin-top:-6px;margin-bottom:6px;">
+      aistudio.google.com/apikey 에서 무료로 키를 발급받을 수 있어요.
+    </div>
+
+    <div class="category-label" style="text-transform:none">GitHub 백업</div>
     <div class="form-row">
       <label>GitHub Personal Access Token</label>
       <input id="set-token" type="password" placeholder="ghp_..." value="${esc(s.token || "")}" />
@@ -677,8 +798,9 @@ function renderSettings() {
       <label>파일 경로</label>
       <input id="set-path" type="text" value="${esc(s.path || "data/log.json")}" />
     </div>
+
     <button class="confirm-btn" data-action="save-settings">저장</button>
-    <button class="big-btn ghost" style="margin-top:10px" data-action="sync-now">지금 동기화</button>
+    <button class="big-btn ghost" style="margin-top:10px" data-action="sync-now">지금 GitHub 동기화</button>
     <div class="sync-status ${s.lastSyncOk === true ? "ok" : s.lastSyncOk === false ? "err" : ""}">
       ${
         s.lastSyncOk === true
@@ -688,6 +810,57 @@ function renderSettings() {
           : "아직 동기화 안 됨"
       }
     </div>
+  `;
+}
+
+function renderAICoaching() {
+  const cache = getAICoachCache();
+  const rule = generateCoaching();
+  const s = getSettings();
+
+  let body;
+  if (!s.geminiKey) {
+    body = h`
+      <div class="coach-summary">
+        AI 코칭을 쓰려면 Gemini API 키가 필요해요.<br><br>
+        1. aistudio.google.com/apikey 에서 무료로 발급<br>
+        2. 설정 화면에서 키 입력 후 저장<br><br>
+        무료 티어로 충분히 쓸 수 있어요.
+      </div>
+      <button class="confirm-btn" data-action="settings">설정으로 이동</button>
+    `;
+  } else if (rule.status !== "ready") {
+    body = `<div class="coach-summary">${esc(
+      rule.summary || "아직 코칭을 만들 만큼 기록이 쌓이지 않았어요. 최소 2주 정도 기록을 쌓아주세요."
+    )}</div>`;
+  } else if (S.aiLoading) {
+    body = `<div class="coach-summary">코치가 이번 주 기록을 분석하고 있어요...</div>`;
+  } else if (S.aiError === "MISSING_KEY") {
+    body = h`
+      <div class="coach-summary">Gemini API 키를 설정에서 입력해주세요.</div>
+      <button class="confirm-btn" data-action="settings">설정으로 이동</button>
+    `;
+  } else if (S.aiError) {
+    body = h`
+      <div class="coach-summary" style="color:var(--red)">생성 실패: ${esc(S.aiError)}</div>
+      <button class="confirm-btn" data-action="ai-generate">다시 시도</button>
+    `;
+  } else if (cache) {
+    body = h`
+      <div class="coach-summary" style="white-space:pre-wrap;line-height:1.6;">${esc(cache.text)}</div>
+      <div class="sync-status">생성: ${new Date(cache.generatedAt).toLocaleString("ko-KR")}</div>
+      <button class="big-btn ghost" style="margin-top:14px" data-action="ai-generate">다시 생성</button>
+    `;
+  } else {
+    body = h`
+      <div class="coach-summary">이번 주 기록을 바탕으로 전문 코칭을 받아보세요.</div>
+      <button class="confirm-btn" data-action="ai-generate">AI 코칭 생성하기</button>
+    `;
+  }
+
+  app.innerHTML = h`
+    ${renderTopbar("AI 코칭", { onBack: true })}
+    ${body}
   `;
 }
 
@@ -748,7 +921,7 @@ function renderCalendar() {
   }
 
   app.innerHTML = h`
-    ${renderTopbar("캘린더", { onBack: true })}
+    ${renderTopbar("운동일정", { onBack: true })}
     <div class="cal-nav">
       <button class="iconbtn" data-action="cal-prev">‹</button>
       <span class="cal-month-label">${y}년 ${m + 1}월</span>
@@ -824,6 +997,14 @@ app.addEventListener("click", (e) => {
       S.screen = "coaching";
       render();
       break;
+    case "open-ai-coaching":
+      S.aiError = null;
+      S.screen = "aicoaching";
+      render();
+      break;
+    case "ai-generate":
+      generateAICoaching();
+      break;
     case "pick-exercise": {
       const exercises = getExercises();
       const ex = exercises.find((x) => x.id === el.dataset.id);
@@ -865,29 +1046,47 @@ app.addEventListener("click", (e) => {
     case "add-exercise": {
       const nameInput = document.getElementById("new-ex-name");
       const catInput = document.getElementById("new-ex-cat");
+      const weightInput = document.getElementById("new-ex-weight");
       const name = nameInput.value.trim();
       const cat = catInput.value.trim() || "기타";
+      const startWeight = Number(weightInput.value) || 0;
       if (!name) break;
       const id = "custom_" + name.replace(/\s+/g, "_") + "_" + Date.now();
       const list = getExercises();
-      list.push({ id, name, cat });
+      list.push({ id, name, cat, startWeight });
       saveExercises(list);
       render();
       break;
     }
     case "save-settings": {
       const s = getSettings();
+      s.appTitle = document.getElementById("set-title").value.trim() || "운동 기록";
+      s.geminiKey = document.getElementById("set-gemini-key").value.trim();
+      s.geminiModel = document.getElementById("set-gemini-model").value.trim() || "gemini-2.0-flash";
       s.token = document.getElementById("set-token").value.trim();
       s.owner = document.getElementById("set-owner").value.trim();
       s.repo = document.getElementById("set-repo").value.trim();
       s.path = document.getElementById("set-path").value.trim() || "data/log.json";
       saveSettings(s);
+      document.title = s.appTitle;
       render();
       break;
     }
     case "sync-now":
       syncToGitHub();
       break;
+  }
+});
+
+app.addEventListener("change", (e) => {
+  const el = e.target.closest('[data-action="set-start-weight"]');
+  if (!el) return;
+  const list = getExercises();
+  const ex = list.find((x) => x.id === el.dataset.id);
+  if (ex) {
+    const val = Number(el.value);
+    ex.startWeight = isNaN(val) ? 0 : val;
+    saveExercises(list);
   }
 });
 
@@ -918,7 +1117,8 @@ function handleBack() {
     S.screen === "manage" ||
     S.screen === "settings" ||
     S.screen === "calendar" ||
-    S.screen === "coaching"
+    S.screen === "coaching" ||
+    S.screen === "aicoaching"
   ) {
     S.screen = "home";
     render();
