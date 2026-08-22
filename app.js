@@ -108,6 +108,7 @@ let S = {
   phase: "weight", // 'weight' | 'reps'
   draftWeight: 20,
   draftReps: 8,
+  weightStep: 2.5,
   calYear: new Date().getFullYear(),
   calMonth: new Date().getMonth(),
   calSelected: null,
@@ -804,9 +805,12 @@ function renderFlow() {
         <div class="dial" id="weight-dial">
           <div class="dial-ticks"></div>
           <div class="dial-knob" id="weight-dial-knob"><div class="dial-notch"></div></div>
-          <div class="dial-center">${WEIGHT_STEP}kg</div>
+          <div class="dial-center" id="weight-dial-center">
+            <span class="dial-center-label">단위</span>
+            <span class="dial-center-val" id="weight-dial-center-val">${S.weightStep}kg</span>
+          </div>
         </div>
-        <div class="dial-hint">돌려서 조절 · ← 내리기 · 올리기 →</div>
+        <div class="dial-hint">돌려서 조절 · ← 내리기 · 올리기 → · 가운데를 탭하면 단위 변경</div>
       </div>
     `;
 
@@ -832,17 +836,44 @@ function angleDelta(a, b) {
   return d;
 }
 
+let dialAudioCtx = null;
+function playDialTick() {
+  try {
+    if (!dialAudioCtx) dialAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (dialAudioCtx.state === "suspended") dialAudioCtx.resume();
+    const t = dialAudioCtx.currentTime;
+    const osc = dialAudioCtx.createOscillator();
+    const gain = dialAudioCtx.createGain();
+    osc.type = "square";
+    osc.frequency.value = 900;
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.05, t + 0.004);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.03);
+    osc.connect(gain).connect(dialAudioCtx.destination);
+    osc.start(t);
+    osc.stop(t + 0.04);
+  } catch (e) {}
+}
+
+const WEIGHT_STEP_OPTIONS = [1, 2.5, 5];
+
 function attachDialEvents() {
   const dial = document.getElementById("weight-dial");
   const knob = document.getElementById("weight-dial-knob");
   const numEl = document.getElementById("draft-num");
+  const centerValEl = document.getElementById("weight-dial-center-val");
   if (!dial || !knob) return;
 
-  const STEP_DEG = 12; // degrees of rotation per WEIGHT_STEP
-  let dragging = false;
+  const STEP_DEG = 30; // degrees of rotation per weight step (matches the 12 tick marks)
+  const CENTER_R = 44; // radius (px) of the tappable center zone
+  const TAP_MOVE_LIMIT = 8; // px of movement still counted as a tap, not a drag
+
+  let mode = null; // 'rotate' | 'tap'
   let lastAngle = 0;
   let rotation = 0;
   let accum = 0;
+  let downX = 0;
+  let downY = 0;
 
   function angleAt(clientX, clientY) {
     const rect = dial.getBoundingClientRect();
@@ -851,8 +882,16 @@ function attachDialEvents() {
     return (Math.atan2(clientY - cy, clientX - cx) * 180) / Math.PI;
   }
 
+  function cycleWeightStep() {
+    const idx = WEIGHT_STEP_OPTIONS.indexOf(S.weightStep);
+    S.weightStep = WEIGHT_STEP_OPTIONS[(idx + 1) % WEIGHT_STEP_OPTIONS.length];
+    if (centerValEl) centerValEl.textContent = `${S.weightStep}kg`;
+    if (navigator.vibrate) navigator.vibrate([5, 40, 5]);
+    playDialTick();
+  }
+
   function onMove(e) {
-    if (!dragging) return;
+    if (mode !== "rotate") return;
     const angle = angleAt(e.clientX, e.clientY);
     const delta = angleDelta(angle, lastAngle);
     lastAngle = angle;
@@ -860,21 +899,27 @@ function attachDialEvents() {
     knob.style.transform = `rotate(${rotation}deg)`;
     accum += delta;
     while (accum >= STEP_DEG) {
-      S.draftWeight = roundTo(S.draftWeight + WEIGHT_STEP, 2);
+      S.draftWeight = roundTo(S.draftWeight + S.weightStep, 2);
       accum -= STEP_DEG;
       if (numEl) numEl.textContent = S.draftWeight;
       if (navigator.vibrate) navigator.vibrate(4);
+      playDialTick();
     }
     while (accum <= -STEP_DEG) {
-      S.draftWeight = Math.max(0, roundTo(S.draftWeight - WEIGHT_STEP, 2));
+      S.draftWeight = Math.max(0, roundTo(S.draftWeight - S.weightStep, 2));
       accum += STEP_DEG;
       if (numEl) numEl.textContent = S.draftWeight;
       if (navigator.vibrate) navigator.vibrate(4);
+      playDialTick();
     }
   }
 
   function onUp(e) {
-    dragging = false;
+    if (mode === "tap") {
+      const moved = Math.hypot(e.clientX - downX, e.clientY - downY);
+      if (moved < TAP_MOVE_LIMIT) cycleWeightStep();
+    }
+    mode = null;
     dial.classList.remove("grabbing");
     try {
       dial.releasePointerCapture(e.pointerId);
@@ -885,11 +930,21 @@ function attachDialEvents() {
   }
 
   dial.addEventListener("pointerdown", (e) => {
-    dragging = true;
-    dial.classList.add("grabbing");
-    lastAngle = angleAt(e.clientX, e.clientY);
-    accum = 0;
+    const rect = dial.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const dist = Math.hypot(e.clientX - cx, e.clientY - cy);
+    downX = e.clientX;
+    downY = e.clientY;
     dial.setPointerCapture(e.pointerId);
+    if (dist <= CENTER_R) {
+      mode = "tap";
+    } else {
+      mode = "rotate";
+      dial.classList.add("grabbing");
+      lastAngle = angleAt(e.clientX, e.clientY);
+      accum = 0;
+    }
     dial.addEventListener("pointermove", onMove);
     dial.addEventListener("pointerup", onUp);
     dial.addEventListener("pointercancel", onUp);
