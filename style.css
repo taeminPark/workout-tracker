@@ -495,8 +495,8 @@ body {
 .manage-row-bottom {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 .manage-row .manage-name {
   flex: 1;
@@ -509,17 +509,28 @@ body {
   gap: 4px;
   flex-shrink: 0;
 }
-.noweight-check {
-  display: flex;
+label.noweight-check {
+  display: inline-flex;
   align-items: center;
   gap: 6px;
   font-size: 12.5px;
+  font-weight: 600;
   color: var(--text-2);
+  background: var(--bg-elev-press);
+  border: 1px solid var(--border);
+  padding: 7px 12px;
+  border-radius: 999px;
   flex-shrink: 0;
+  transition: background var(--fast), border-color var(--fast), color var(--fast);
+}
+.noweight-check:has(input:checked) {
+  background: rgba(10, 132, 255, 0.16);
+  border-color: rgba(10, 132, 255, 0.4);
+  color: var(--accent);
 }
 .noweight-check input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
+  width: 15px;
+  height: 15px;
   accent-color: var(--accent);
   flex-shrink: 0;
 }

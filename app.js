@@ -1027,7 +1027,7 @@ function renderManage() {
           <input type="checkbox" data-action="toggle-noweight" data-id="${esc(e.id)}" ${
         e.noWeight ? "checked" : ""
       } />
-          무게 없는 운동
+          <span>횟수운동</span>
         </label>
         <span class="manage-weight" data-weight-wrap="${esc(e.id)}" style="${
         e.noWeight ? "display:none;" : ""
@@ -1057,7 +1057,7 @@ function renderManage() {
     <div class="form-row">
       <label class="noweight-check">
         <input type="checkbox" id="new-ex-noweight" />
-        무게 없는 운동 (예: 플랭크, 복근운동)
+        <span>횟수운동 (예: 플랭크, 복근운동)</span>
       </label>
     </div>
     <div class="form-row" id="new-ex-weight-row">
