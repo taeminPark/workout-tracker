@@ -115,6 +115,7 @@ let S = {
   aiLoading: false,
   aiError: null,
   syncing: false,
+  restoring: false,
   settingsSaved: false,
   logTargetDate: null,
   editingLog: null, // { date, idx } when editing an already-saved log entry
@@ -557,6 +558,12 @@ function utf8ToB64(str) {
   return btoa(bin);
 }
 
+function b64ToUtf8(b64) {
+  const bin = atob(b64.replace(/\n/g, ""));
+  const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
 async function syncToGitHub() {
   const s = getSettings();
   if (!s.token || !s.owner || !s.repo) {
@@ -614,6 +621,51 @@ async function syncToGitHub() {
   saveSettings(s);
   S.syncing = false;
   if (S.screen === "settings" || S.screen === "home") render();
+}
+
+async function loadFromGitHub() {
+  const s = getSettings();
+  if (!s.token || !s.owner || !s.repo) {
+    s.lastRestoreOk = false;
+    s.lastRestoreError = "GitHub 토큰/사용자명/저장소를 먼저 입력하고 저장해주세요.";
+    saveSettings(s);
+    if (S.screen === "settings") render();
+    return;
+  }
+  if (!confirm("GitHub에 백업된 기록으로 이 기기의 운동 기록을 덮어씁니다. 계속할까요?")) return;
+
+  S.restoring = true;
+  render();
+
+  const path = s.path || "data/log.json";
+  const url = `https://api.github.com/repos/${s.owner}/${s.repo}/contents/${path}`;
+  const headers = {
+    Authorization: `Bearer ${s.token}`,
+    Accept: "application/vnd.github+json",
+  };
+
+  try {
+    const getRes = await fetch(url, { headers });
+    if (getRes.status === 404) {
+      throw new Error("GitHub 저장소에 백업 파일이 없습니다.");
+    }
+    if (!getRes.ok) {
+      throw new Error(`조회 실패 (${getRes.status})`);
+    }
+    const data = await getRes.json();
+    const logs = JSON.parse(b64ToUtf8(data.content));
+    saveLogs(logs);
+
+    s.lastRestore = Date.now();
+    s.lastRestoreOk = true;
+    s.lastRestoreError = null;
+  } catch (e) {
+    s.lastRestoreOk = false;
+    s.lastRestoreError = String(e.message || e);
+  }
+  saveSettings(s);
+  S.restoring = false;
+  render();
 }
 
 /* ---------- rendering ---------- */
@@ -1126,6 +1178,23 @@ function renderSettings() {
           : "아직 동기화 안 됨"
       }
     </div>
+
+    <button class="big-btn ghost" style="margin-top:10px" data-action="restore-now" ${
+      S.restoring ? "disabled" : ""
+    }>${S.restoring ? "불러오는 중…" : "GitHub에서 불러오기 (이 기기 덮어쓰기)"}</button>
+    <div class="sync-status ${
+      S.restoring ? "" : s.lastRestoreOk === true ? "ok" : s.lastRestoreOk === false ? "err" : ""
+    }">
+      ${
+        S.restoring
+          ? "GitHub에서 불러오는 중이에요…"
+          : s.lastRestoreOk === true
+          ? `마지막 복원: ${new Date(s.lastRestore).toLocaleString("ko-KR")}`
+          : s.lastRestoreOk === false
+          ? `실패: ${esc(s.lastRestoreError || "")}`
+          : "아직 복원한 적 없음"
+      }
+    </div>
   `;
 }
 
@@ -1423,6 +1492,9 @@ app.addEventListener("click", (e) => {
     }
     case "sync-now":
       syncToGitHub();
+      break;
+    case "restore-now":
+      loadFromGitHub();
       break;
   }
 });
