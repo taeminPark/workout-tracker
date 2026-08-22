@@ -519,7 +519,7 @@ label.noweight-check {
   background: var(--bg-elev-press);
   border: 1px solid var(--border);
   padding: 7px 12px;
-  border-radius: 999px;
+  border-radius: 9px;
   flex-shrink: 0;
   transition: background var(--fast), border-color var(--fast), color var(--fast);
 }
