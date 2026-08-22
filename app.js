@@ -114,6 +114,7 @@ let S = {
   aiLoading: false,
   aiError: null,
   logTargetDate: null,
+  editingLog: null, // { date, idx } when editing an already-saved log entry
 };
 
 const WEIGHT_STEP = 2.5;
@@ -126,12 +127,33 @@ function resetSession() {
   S.flowIndex = 0;
   S.flowMode = "append";
   S.phase = "weight";
+  S.editingLog = null;
 }
 
 function commitExercise() {
   if (!S.currentExercise || S.sets.length === 0) return;
-  const key = S.logTargetDate || todayKey();
   const logs = getLogs();
+
+  if (S.editingLog) {
+    const { date, idx } = S.editingLog;
+    if (logs[date] && logs[date][idx]) {
+      logs[date][idx] = {
+        ...logs[date][idx],
+        sets: S.sets.map((s) => ({ weight: s.weight, reps: s.reps })),
+      };
+      saveLogs(logs);
+      if (date === todayKey()) {
+        const lastUsed = getLastUsed();
+        const last = S.sets[S.sets.length - 1];
+        lastUsed[S.currentExercise.id] = { weight: last.weight, reps: last.reps };
+        saveLastUsed(lastUsed);
+      }
+      syncToGitHub();
+    }
+    return;
+  }
+
+  const key = S.logTargetDate || todayKey();
   if (!logs[key]) logs[key] = [];
   logs[key].push({
     exerciseId: S.currentExercise.id,
@@ -149,6 +171,25 @@ function commitExercise() {
   }
 
   syncToGitHub();
+}
+
+function startEditLogEntry(date, idx) {
+  const logs = getLogs();
+  const entry = logs[date] && logs[date][idx];
+  if (!entry) return;
+  const exercises = getExercises();
+  const ex = exercises.find((x) => x.id === entry.exerciseId) || {
+    id: entry.exerciseId,
+    name: entry.exerciseName,
+    startWeight: entry.sets[0] ? entry.sets[0].weight : 20,
+  };
+  resetSession();
+  S.currentExercise = ex;
+  S.sets = entry.sets.map((s) => ({ weight: s.weight, reps: s.reps }));
+  S.targetSets = S.sets.length;
+  S.editingLog = { date, idx };
+  S.screen = "summary";
+  render();
 }
 
 /* ---------- flow control ---------- */
@@ -229,6 +270,23 @@ function editSet(index) {
 }
 
 function finishExercise() {
+  if (S.editingLog) {
+    const date = S.editingLog.date;
+    commitExercise();
+    resetSession();
+    if (date === todayKey()) {
+      goHome();
+    } else {
+      const [y, m] = date.split("-").map(Number);
+      S.calYear = y;
+      S.calMonth = m - 1;
+      S.calSelected = date;
+      S.screen = "calendar";
+      render();
+    }
+    return;
+  }
+
   const targetDate = S.logTargetDate;
   commitExercise();
   if (targetDate) {
@@ -624,11 +682,16 @@ function renderHome() {
           .map(
             (e, i) => h`
           <div class="entry">
-            <span class="entry-name">${esc(e.exerciseName)}</span>
-            <span class="entry-right">
-              <span>${esc(summarizeEntry(e))}</span>
-              <button class="row-del" data-action="del-log-entry" data-date="${todayKey()}" data-idx="${i}">✕</button>
-            </span>
+            <div class="entry-top">
+              <span class="entry-name">${esc(e.exerciseName)}</span>
+              <span class="entry-actions">
+                <button class="row-edit" data-action="edit-log-entry" data-date="${todayKey()}" data-idx="${i}">✎</button>
+                <button class="row-del" data-action="del-log-entry" data-date="${todayKey()}" data-idx="${i}">✕</button>
+              </span>
+            </div>
+            <div class="entry-sets">
+              ${e.sets.map((s) => `<span class="set-chip">${s.weight}×${s.reps}</span>`).join("")}
+            </div>
           </div>
         `
           )
@@ -729,23 +792,112 @@ function renderFlow() {
     return `<div class="${cls}"></div>`;
   }).join("");
 
+  const controlHtml = isReps
+    ? h`
+      <div class="stepper-row">
+        <button class="stepper-btn" data-action="step-down">−</button>
+        <button class="stepper-btn" data-action="step-up">+</button>
+      </div>
+    `
+    : h`
+      <div class="dial-outer">
+        <div class="dial" id="weight-dial">
+          <div class="dial-ticks"></div>
+          <div class="dial-knob" id="weight-dial-knob"><div class="dial-notch"></div></div>
+          <div class="dial-center">${WEIGHT_STEP}kg</div>
+        </div>
+        <div class="dial-hint">돌려서 조절 · ← 내리기 · 올리기 →</div>
+      </div>
+    `;
+
   app.innerHTML = h`
     ${renderTopbar(S.currentExercise.name, { onBack: true })}
     <div class="session-title">세트 ${S.flowIndex + 1} / ${S.targetSets}</div>
     <div class="progress-dots">${dots}</div>
     <div class="stepper-wrap">
       <div class="stepper-label">${label}</div>
-      <div class="stepper-value">${value}<span class="unit">${unit}</span></div>
-      <div class="stepper-row">
-        <button class="stepper-btn" data-action="step-down">−</button>
-        <button class="stepper-btn" data-action="step-up">+</button>
-      </div>
+      <div class="stepper-value"><span id="draft-num">${value}</span><span class="unit">${unit}</span></div>
+      ${controlHtml}
       <button class="confirm-btn" data-action="confirm-step">확인 ✓</button>
     </div>
   `;
+
+  if (!isReps) attachDialEvents();
+}
+
+function angleDelta(a, b) {
+  let d = a - b;
+  while (d > 180) d -= 360;
+  while (d < -180) d += 360;
+  return d;
+}
+
+function attachDialEvents() {
+  const dial = document.getElementById("weight-dial");
+  const knob = document.getElementById("weight-dial-knob");
+  const numEl = document.getElementById("draft-num");
+  if (!dial || !knob) return;
+
+  const STEP_DEG = 12; // degrees of rotation per WEIGHT_STEP
+  let dragging = false;
+  let lastAngle = 0;
+  let rotation = 0;
+  let accum = 0;
+
+  function angleAt(clientX, clientY) {
+    const rect = dial.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    return (Math.atan2(clientY - cy, clientX - cx) * 180) / Math.PI;
+  }
+
+  function onMove(e) {
+    if (!dragging) return;
+    const angle = angleAt(e.clientX, e.clientY);
+    const delta = angleDelta(angle, lastAngle);
+    lastAngle = angle;
+    rotation += delta;
+    knob.style.transform = `rotate(${rotation}deg)`;
+    accum += delta;
+    while (accum >= STEP_DEG) {
+      S.draftWeight = roundTo(S.draftWeight + WEIGHT_STEP, 2);
+      accum -= STEP_DEG;
+      if (numEl) numEl.textContent = S.draftWeight;
+      if (navigator.vibrate) navigator.vibrate(4);
+    }
+    while (accum <= -STEP_DEG) {
+      S.draftWeight = Math.max(0, roundTo(S.draftWeight - WEIGHT_STEP, 2));
+      accum += STEP_DEG;
+      if (numEl) numEl.textContent = S.draftWeight;
+      if (navigator.vibrate) navigator.vibrate(4);
+    }
+  }
+
+  function onUp(e) {
+    dragging = false;
+    dial.classList.remove("grabbing");
+    try {
+      dial.releasePointerCapture(e.pointerId);
+    } catch (err) {}
+    dial.removeEventListener("pointermove", onMove);
+    dial.removeEventListener("pointerup", onUp);
+    dial.removeEventListener("pointercancel", onUp);
+  }
+
+  dial.addEventListener("pointerdown", (e) => {
+    dragging = true;
+    dial.classList.add("grabbing");
+    lastAngle = angleAt(e.clientX, e.clientY);
+    accum = 0;
+    dial.setPointerCapture(e.pointerId);
+    dial.addEventListener("pointermove", onMove);
+    dial.addEventListener("pointerup", onUp);
+    dial.addEventListener("pointercancel", onUp);
+  });
 }
 
 function renderSummary() {
+  const isEditingLog = !!S.editingLog;
   const rows = S.sets
     .map(
       (s, i) => h`
@@ -759,11 +911,15 @@ function renderSummary() {
 
   app.innerHTML = h`
     ${renderTopbar(S.currentExercise.name, { onBack: true })}
-    <div class="session-title">기록 완료 · 세트를 탭하면 수정</div>
+    <div class="session-title">${
+      isEditingLog ? "기록 수정 · 세트를 탭하면 수정" : "기록 완료 · 세트를 탭하면 수정"
+    }</div>
     <div class="set-list">${rows}</div>
     <div class="footer-actions">
       <button class="big-btn ghost" data-action="add-set">+ 세트 추가</button>
-      <button class="confirm-btn" data-action="finish-exercise">저장하고 홈으로</button>
+      <button class="confirm-btn" data-action="finish-exercise">${
+        isEditingLog ? "수정 저장" : "저장하고 홈으로"
+      }</button>
     </div>
   `;
 }
@@ -848,7 +1004,7 @@ function renderSettings() {
       <input id="set-path" type="text" value="${esc(s.path || "data/log.json")}" />
     </div>
 
-    <button class="confirm-btn" data-action="save-settings">저장</button>
+    <button class="confirm-btn" style="margin-left:auto;margin-right:auto;" data-action="save-settings">저장</button>
     <button class="big-btn ghost" style="margin-top:10px" data-action="sync-now">지금 GitHub 동기화</button>
     <div class="sync-status ${s.lastSyncOk === true ? "ok" : s.lastSyncOk === false ? "err" : ""}">
       ${
@@ -1049,6 +1205,10 @@ app.addEventListener("click", (e) => {
     case "backfill-start":
       startBackfill();
       break;
+    case "edit-log-entry": {
+      startEditLogEntry(el.dataset.date, Number(el.dataset.idx));
+      break;
+    }
     case "del-log-entry": {
       const date = el.dataset.date;
       const idx = Number(el.dataset.idx);
@@ -1180,6 +1340,21 @@ function handleBack() {
       startSet(S.flowIndex - 1, "append");
     }
   } else if (S.screen === "summary") {
+    if (S.editingLog) {
+      const date = S.editingLog.date;
+      resetSession();
+      if (date === todayKey()) {
+        goHome();
+      } else {
+        const [y, m] = date.split("-").map(Number);
+        S.calYear = y;
+        S.calMonth = m - 1;
+        S.calSelected = date;
+        S.screen = "calendar";
+        render();
+      }
+      return;
+    }
     S.screen = "setcount";
     S.sets = [];
     render();
@@ -1201,7 +1376,7 @@ function handleBack() {
 
 /* ---------- press feedback (iOS Safari doesn't reliably fire :active on tap) ---------- */
 
-const PRESSABLE = ".big-btn, .confirm-btn, .stepper-btn, .iconbtn, .quickrow .pill, .del-btn, .cal-cell, .set-row[data-action], .coach-teaser[data-action], .row-del, .add-log-btn";
+const PRESSABLE = ".big-btn, .confirm-btn, .stepper-btn, .iconbtn, .quickrow .pill, .del-btn, .cal-cell, .set-row[data-action], .coach-teaser[data-action], .row-del, .row-edit, .add-log-btn";
 
 function clearPressed() {
   document.querySelectorAll(".pressed").forEach((el) => el.classList.remove("pressed"));
