@@ -115,12 +115,14 @@ let S = {
   aiLoading: false,
   aiError: null,
   syncing: false,
+  settingsSaved: false,
   logTargetDate: null,
   editingLog: null, // { date, idx } when editing an already-saved log entry
 };
 
 const WEIGHT_STEP = 2.5;
 const REPS_STEP = 1;
+let settingsSavedTimer = null;
 
 function resetSession() {
   S.currentExercise = null;
@@ -141,6 +143,7 @@ function commitExercise() {
     if (logs[date] && logs[date][idx]) {
       logs[date][idx] = {
         ...logs[date][idx],
+        noWeight: !!S.currentExercise.noWeight,
         sets: S.sets.map((s) => ({ weight: s.weight, reps: s.reps })),
       };
       saveLogs(logs);
@@ -160,6 +163,7 @@ function commitExercise() {
   logs[key].push({
     exerciseId: S.currentExercise.id,
     exerciseName: S.currentExercise.name,
+    noWeight: !!S.currentExercise.noWeight,
     sets: S.sets.map((s) => ({ weight: s.weight, reps: s.reps })),
     ts: Date.now(),
   });
@@ -184,6 +188,7 @@ function startEditLogEntry(date, idx) {
     id: entry.exerciseId,
     name: entry.exerciseName,
     startWeight: entry.sets[0] ? entry.sets[0].weight : 20,
+    noWeight: !!entry.noWeight,
   };
   resetSession();
   S.currentExercise = ex;
@@ -235,7 +240,7 @@ function startSet(index, mode) {
     S.draftWeight = d.weight;
     S.draftReps = d.reps;
   }
-  S.phase = "weight";
+  S.phase = S.currentExercise.noWeight ? "reps" : "weight";
   S.screen = "flow";
   render();
 }
@@ -246,7 +251,8 @@ function confirmWeightStep() {
 }
 
 function confirmRepsStep() {
-  const value = { weight: S.draftWeight, reps: S.draftReps };
+  const weight = S.currentExercise.noWeight ? 0 : S.draftWeight;
+  const value = { weight, reps: S.draftReps };
   if (S.flowMode === "edit") {
     S.sets[S.flowIndex] = value;
     S.screen = "summary";
@@ -358,6 +364,7 @@ function collectRange(fromDaysAgo, toDaysAgo) {
     const entries = logs[key];
     if (!entries) continue;
     entries.forEach((entry) => {
+      if (entry.noWeight) return; // volume/1RM-based coaching doesn't apply to bodyweight exercises
       if (!map[entry.exerciseId]) {
         const meta = exercises.find((x) => x.id === entry.exerciseId);
         map[entry.exerciseId] = {
@@ -652,6 +659,7 @@ function renderTopbar(title, opts) {
 }
 
 function summarizeEntry(entry) {
+  if (entry.noWeight) return entry.sets.map((s) => `${s.reps}회`).join(", ");
   return entry.sets.map((s) => `${s.weight}×${s.reps}`).join(", ");
 }
 
@@ -702,7 +710,9 @@ function renderHome() {
               </span>
             </div>
             <div class="entry-sets">
-              ${e.sets.map((s) => `<span class="set-chip">${s.weight}×${s.reps}</span>`).join("")}
+              ${e.sets
+                .map((s) => `<span class="set-chip">${e.noWeight ? `${s.reps}회` : `${s.weight}×${s.reps}`}</span>`)
+                .join("")}
             </div>
           </div>
         `
@@ -981,7 +991,7 @@ function renderSummary() {
       (s, i) => h`
     <div class="set-row" data-action="edit-set" data-i="${i}">
       <span class="set-idx">세트 ${i + 1}</span>
-      <span class="set-val">${s.weight}kg × ${s.reps}회</span>
+      <span class="set-val">${S.currentExercise.noWeight ? `${s.reps}회` : `${s.weight}kg × ${s.reps}회`}</span>
     </div>
   `
     )
@@ -1008,14 +1018,26 @@ function renderManage() {
     .map(
       (e) => h`
     <div class="manage-row">
-      <span class="manage-name">${esc(e.name)} <span style="color:var(--text-3)">· ${esc(e.cat)}</span></span>
-      <div class="manage-weight">
-        <input type="number" inputmode="decimal" step="2.5" min="0"
-          class="weight-input" data-action="set-start-weight" data-id="${esc(e.id)}"
-          value="${e.startWeight ?? 20}" />
-        <span class="unit-sm">kg</span>
+      <div class="manage-row-top">
+        <span class="manage-name">${esc(e.name)} <span style="color:var(--text-3)">· ${esc(e.cat)}</span></span>
+        <button class="del-btn" data-action="del-exercise" data-id="${esc(e.id)}">삭제</button>
       </div>
-      <button class="del-btn" data-action="del-exercise" data-id="${esc(e.id)}">삭제</button>
+      <div class="manage-row-bottom">
+        <label class="noweight-check">
+          <input type="checkbox" data-action="toggle-noweight" data-id="${esc(e.id)}" ${
+        e.noWeight ? "checked" : ""
+      } />
+          무게 없는 운동
+        </label>
+        <span class="manage-weight" data-weight-wrap="${esc(e.id)}" style="${
+        e.noWeight ? "display:none;" : ""
+      }">
+          <input type="number" inputmode="decimal" step="2.5" min="0"
+            class="weight-input" data-action="set-start-weight" data-id="${esc(e.id)}"
+            value="${e.startWeight ?? 20}" />
+          <span class="unit-sm">kg</span>
+        </span>
+      </div>
     </div>
   `
     )
@@ -1033,6 +1055,12 @@ function renderManage() {
       <input id="new-ex-cat" type="text" placeholder="예: 하체" value="기타" />
     </div>
     <div class="form-row">
+      <label class="noweight-check">
+        <input type="checkbox" id="new-ex-noweight" />
+        무게 없는 운동 (예: 플랭크, 복근운동)
+      </label>
+    </div>
+    <div class="form-row" id="new-ex-weight-row">
       <label>시작 무게 (kg)</label>
       <input id="new-ex-weight" type="number" inputmode="decimal" step="2.5" min="0" value="20" />
     </div>
@@ -1083,6 +1111,7 @@ function renderSettings() {
     </div>
 
     <button class="confirm-btn" data-action="save-settings">저장</button>
+    ${S.settingsSaved ? `<div class="save-toast">✓ 저장되었습니다</div>` : ""}
     <button class="big-btn ghost" style="margin-top:10px" data-action="sync-now" ${S.syncing ? "disabled" : ""}>${
     S.syncing ? "동기화 중…" : "지금 GitHub 동기화"
   }</button>
@@ -1359,13 +1388,15 @@ app.addEventListener("click", (e) => {
       const nameInput = document.getElementById("new-ex-name");
       const catInput = document.getElementById("new-ex-cat");
       const weightInput = document.getElementById("new-ex-weight");
+      const noWeightInput = document.getElementById("new-ex-noweight");
       const name = nameInput.value.trim();
       const cat = catInput.value.trim() || "기타";
-      const startWeight = Number(weightInput.value) || 0;
+      const noWeight = !!(noWeightInput && noWeightInput.checked);
+      const startWeight = noWeight ? 0 : Number(weightInput.value) || 0;
       if (!name) break;
       const id = "custom_" + name.replace(/\s+/g, "_") + "_" + Date.now();
       const list = getExercises();
-      list.push({ id, name, cat, startWeight });
+      list.push({ id, name, cat, startWeight, noWeight });
       saveExercises(list);
       render();
       break;
@@ -1381,7 +1412,13 @@ app.addEventListener("click", (e) => {
       s.path = document.getElementById("set-path").value.trim() || "data/log.json";
       saveSettings(s);
       document.title = s.appTitle;
+      S.settingsSaved = true;
       render();
+      clearTimeout(settingsSavedTimer);
+      settingsSavedTimer = setTimeout(() => {
+        S.settingsSaved = false;
+        if (S.screen === "settings") render();
+      }, 2200);
       break;
     }
     case "sync-now":
@@ -1391,14 +1428,34 @@ app.addEventListener("click", (e) => {
 });
 
 app.addEventListener("change", (e) => {
-  const el = e.target.closest('[data-action="set-start-weight"]');
-  if (!el) return;
-  const list = getExercises();
-  const ex = list.find((x) => x.id === el.dataset.id);
-  if (ex) {
-    const val = Number(el.value);
-    ex.startWeight = isNaN(val) ? 0 : val;
-    saveExercises(list);
+  const weightEl = e.target.closest('[data-action="set-start-weight"]');
+  if (weightEl) {
+    const list = getExercises();
+    const ex = list.find((x) => x.id === weightEl.dataset.id);
+    if (ex) {
+      const val = Number(weightEl.value);
+      ex.startWeight = isNaN(val) ? 0 : val;
+      saveExercises(list);
+    }
+    return;
+  }
+
+  const noWeightEl = e.target.closest('[data-action="toggle-noweight"]');
+  if (noWeightEl) {
+    const list = getExercises();
+    const ex = list.find((x) => x.id === noWeightEl.dataset.id);
+    if (ex) {
+      ex.noWeight = noWeightEl.checked;
+      saveExercises(list);
+      const wrap = document.querySelector(`[data-weight-wrap="${CSS.escape(noWeightEl.dataset.id)}"]`);
+      if (wrap) wrap.style.display = ex.noWeight ? "none" : "";
+    }
+    return;
+  }
+
+  if (e.target.id === "new-ex-noweight") {
+    const row = document.getElementById("new-ex-weight-row");
+    if (row) row.style.display = e.target.checked ? "none" : "";
   }
 });
 

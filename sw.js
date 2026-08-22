@@ -1,4 +1,4 @@
-const CACHE = "wt-cache-v7";
+const CACHE = "wt-cache-v8";
 const ASSETS = [
   "./",
   "./index.html",
@@ -25,11 +25,14 @@ self.addEventListener("activate", (e) => {
 
 // network-first: always try to fetch the latest version when online,
 // only fall back to the cached copy when offline (e.g. no signal in the gym).
+// cache: "reload" bypasses the browser's own HTTP cache (GitHub Pages sends
+// Cache-Control: max-age=600), otherwise "network-first" can still silently
+// resolve to a stale response for up to 10 minutes after a deploy.
 self.addEventListener("fetch", (e) => {
   if (e.request.method !== "GET") return;
   if (e.request.url.includes("api.github.com")) return;
   e.respondWith(
-    fetch(e.request)
+    fetch(e.request, { cache: "reload" })
       .then((res) => {
         const copy = res.clone();
         caches.open(CACHE).then((c) => c.put(e.request, copy));
