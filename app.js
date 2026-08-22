@@ -114,6 +114,7 @@ let S = {
   calSelected: null,
   aiLoading: false,
   aiError: null,
+  syncing: false,
   logTargetDate: null,
   editingLog: null, // { date, idx } when editing an already-saved log entry
 };
@@ -551,7 +552,16 @@ function utf8ToB64(str) {
 
 async function syncToGitHub() {
   const s = getSettings();
-  if (!s.token || !s.owner || !s.repo) return;
+  if (!s.token || !s.owner || !s.repo) {
+    s.lastSyncOk = false;
+    s.lastSyncError = "GitHub 토큰/사용자명/저장소를 먼저 입력하고 저장해주세요.";
+    saveSettings(s);
+    if (S.screen === "settings" || S.screen === "home") render();
+    return;
+  }
+
+  S.syncing = true;
+  if (S.screen === "settings" || S.screen === "home") render();
 
   const path = s.path || "data/log.json";
   const url = `https://api.github.com/repos/${s.owner}/${s.repo}/contents/${path}`;
@@ -595,6 +605,7 @@ async function syncToGitHub() {
     s.lastSyncError = String(e.message || e);
   }
   saveSettings(s);
+  S.syncing = false;
   if (S.screen === "settings" || S.screen === "home") render();
 }
 
@@ -723,7 +734,9 @@ function renderHome() {
 
   let syncLine = "";
   if (settings.token) {
-    if (settings.lastSyncOk === true) {
+    if (S.syncing) {
+      syncLine = `<div class="sync-status">GitHub 동기화 중…</div>`;
+    } else if (settings.lastSyncOk === true) {
       syncLine = `<div class="sync-status ok">GitHub 동기화됨 · ${new Date(
         settings.lastSync
       ).toLocaleTimeString("ko-KR")}</div>`;
@@ -1060,10 +1073,14 @@ function renderSettings() {
     </div>
 
     <button class="confirm-btn" style="margin-left:auto;margin-right:auto;" data-action="save-settings">저장</button>
-    <button class="big-btn ghost" style="margin-top:10px" data-action="sync-now">지금 GitHub 동기화</button>
-    <div class="sync-status ${s.lastSyncOk === true ? "ok" : s.lastSyncOk === false ? "err" : ""}">
+    <button class="big-btn ghost" style="margin-top:10px" data-action="sync-now" ${S.syncing ? "disabled" : ""}>${
+    S.syncing ? "동기화 중…" : "지금 GitHub 동기화"
+  }</button>
+    <div class="sync-status ${S.syncing ? "" : s.lastSyncOk === true ? "ok" : s.lastSyncOk === false ? "err" : ""}">
       ${
-        s.lastSyncOk === true
+        S.syncing
+          ? "GitHub에 저장하는 중이에요…"
+          : s.lastSyncOk === true
           ? `마지막 동기화: ${new Date(s.lastSync).toLocaleString("ko-KR")}`
           : s.lastSyncOk === false
           ? `실패: ${esc(s.lastSyncError || "")}`
