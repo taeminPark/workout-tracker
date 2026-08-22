@@ -119,6 +119,7 @@ let S = {
   settingsSaved: false,
   logTargetDate: null,
   editingLog: null, // { date, idx } when editing an already-saved log entry
+  todayCollapsed: false,
 };
 
 const WEIGHT_STEP = 2.5;
@@ -595,7 +596,12 @@ async function syncToGitHub() {
     }
 
     const content = JSON.stringify(
-      { logs: getLogs(), exercises: getExercises(), appTitle: s.appTitle || "운동 기록" },
+      {
+        logs: getLogs(),
+        exercises: getExercises(),
+        appTitle: s.appTitle || "운동 기록",
+        aiCoach: getAICoachCache(),
+      },
       null,
       2
     );
@@ -666,6 +672,7 @@ async function loadFromGitHub() {
         s.appTitle = parsed.appTitle.trim();
         document.title = s.appTitle;
       }
+      if (parsed.aiCoach && typeof parsed.aiCoach === "object") saveAICoachCache(parsed.aiCoach);
     } else {
       // 이전 백업 형식 (log.json이 날짜별 기록만 담고 있던 시절) 호환
       saveLogs(parsed);
@@ -767,28 +774,33 @@ function renderHome() {
   let todayHtml = "";
   if (today.length > 0) {
     todayHtml = h`
-      <div class="today-box">
-        <h3>오늘 기록</h3>
-        ${today
-          .map(
-            (e, i) => h`
-          <div class="entry">
-            <div class="entry-top">
-              <span class="entry-name">${esc(e.exerciseName)}</span>
-              <span class="entry-actions">
-                <button class="row-edit" data-action="edit-log-entry" data-date="${todayKey()}" data-idx="${i}">✎</button>
-                <button class="row-del" data-action="del-log-entry" data-date="${todayKey()}" data-idx="${i}">✕</button>
-              </span>
+      <div class="today-box${S.todayCollapsed ? " collapsed" : ""}">
+        <div class="today-box-head" data-action="toggle-today">
+          <h3>오늘 기록 · ${today.length}개</h3>
+          <span class="today-chevron">⌄</span>
+        </div>
+        <div class="today-entries">
+          ${today
+            .map(
+              (e, i) => h`
+            <div class="entry">
+              <div class="entry-top">
+                <span class="entry-name">${esc(e.exerciseName)}</span>
+                <span class="entry-actions">
+                  <button class="row-edit" data-action="edit-log-entry" data-date="${todayKey()}" data-idx="${i}">✎</button>
+                  <button class="row-del" data-action="del-log-entry" data-date="${todayKey()}" data-idx="${i}">✕</button>
+                </span>
+              </div>
+              <div class="entry-sets">
+                ${e.sets
+                  .map((s) => `<span class="set-chip">${e.noWeight ? `${s.reps}회` : `${s.weight}×${s.reps}`}</span>`)
+                  .join("")}
+              </div>
             </div>
-            <div class="entry-sets">
-              ${e.sets
-                .map((s) => `<span class="set-chip">${e.noWeight ? `${s.reps}회` : `${s.weight}×${s.reps}`}</span>`)
-                .join("")}
-            </div>
-          </div>
-        `
-          )
-          .join("")}
+          `
+            )
+            .join("")}
+        </div>
       </div>
     `;
   }
@@ -914,13 +926,45 @@ function renderFlow() {
     <div class="progress-dots">${dots}</div>
     <div class="stepper-wrap">
       <div class="stepper-label">${label}</div>
-      <div class="stepper-value"><span id="draft-num">${value}</span><span class="unit">${unit}</span></div>
+      <div class="stepper-value"${
+        isReps ? ' data-action="edit-reps"' : ""
+      }><span id="draft-num">${value}</span><span class="unit">${unit}</span></div>
       ${controlHtml}
       <button class="confirm-btn" data-action="confirm-step">확인 ✓</button>
     </div>
   `;
 
   if (!isReps) attachDialEvents();
+}
+
+function startEditReps() {
+  if (S.phase !== "reps") return;
+  const wrap = document.querySelector(".stepper-value");
+  const numEl = document.getElementById("draft-num");
+  if (!wrap || !numEl || wrap.querySelector(".draft-num-input")) return;
+
+  const input = document.createElement("input");
+  input.type = "tel";
+  input.inputMode = "numeric";
+  input.pattern = "[0-9]*";
+  input.className = "draft-num-input";
+  input.value = String(S.draftReps);
+  numEl.replaceWith(input);
+  input.focus();
+  input.select();
+
+  let done = false;
+  const commit = () => {
+    if (done) return;
+    done = true;
+    const v = parseInt(input.value, 10);
+    S.draftReps = Number.isFinite(v) && v >= 0 ? v : 0;
+    render();
+  };
+  input.addEventListener("blur", commit);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") input.blur();
+  });
 }
 
 function angleDelta(a, b) {
@@ -956,6 +1000,7 @@ function attachDialEvents() {
   const knob = document.getElementById("weight-dial-knob");
   const numEl = document.getElementById("draft-num");
   const centerValEl = document.getElementById("weight-dial-center-val");
+  const notchEl = knob ? knob.querySelector(".dial-notch") : null;
   if (!dial || !knob) return;
 
   const STEP_DEG = 30; // degrees of rotation per weight step (matches the 12 tick marks)
@@ -1005,6 +1050,7 @@ function attachDialEvents() {
       accum -= STEP_DEG;
       if (numEl) numEl.textContent = S.draftWeight;
       pulse(numEl);
+      pulse(notchEl);
       if (navigator.vibrate) navigator.vibrate(4);
       playDialTick();
     }
@@ -1013,8 +1059,26 @@ function attachDialEvents() {
       accum += STEP_DEG;
       if (numEl) numEl.textContent = S.draftWeight;
       pulse(numEl);
+      pulse(notchEl);
       if (navigator.vibrate) navigator.vibrate(4);
       playDialTick();
+    }
+  }
+
+  function snapToNearestTick() {
+    const snapped = Math.round(rotation / STEP_DEG) * STEP_DEG;
+    const landed = snapped !== rotation;
+    rotation = snapped;
+    knob.style.transition = "transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1)";
+    knob.style.transform = `rotate(${rotation}deg)`;
+    const clearTransition = () => {
+      knob.style.transition = "";
+      knob.removeEventListener("transitionend", clearTransition);
+    };
+    knob.addEventListener("transitionend", clearTransition);
+    if (landed) {
+      pulse(notchEl);
+      if (navigator.vibrate) navigator.vibrate(6);
     }
   }
 
@@ -1022,6 +1086,8 @@ function attachDialEvents() {
     if (mode === "tap") {
       const moved = Math.hypot(e.clientX - downX, e.clientY - downY);
       if (moved < TAP_MOVE_LIMIT) cycleWeightStep();
+    } else if (mode === "rotate") {
+      snapToNearestTick();
     }
     mode = null;
     dial.classList.remove("grabbing");
@@ -1461,6 +1527,13 @@ app.addEventListener("click", (e) => {
       else S.draftReps = S.draftReps + REPS_STEP;
       render();
       break;
+    case "edit-reps":
+      startEditReps();
+      break;
+    case "toggle-today":
+      S.todayCollapsed = !S.todayCollapsed;
+      render();
+      break;
     case "confirm-step":
       if (S.phase === "weight") confirmWeightStep();
       else confirmRepsStep();
@@ -1614,7 +1687,7 @@ function handleBack() {
 
 /* ---------- press feedback (iOS Safari doesn't reliably fire :active on tap) ---------- */
 
-const PRESSABLE = ".big-btn, .confirm-btn, .stepper-btn, .iconbtn, .quickrow .pill, .del-btn, .cal-cell, .set-row[data-action], .coach-teaser[data-action], .row-del, .row-edit, .add-log-btn";
+const PRESSABLE = ".big-btn, .confirm-btn, .stepper-btn, .iconbtn, .quickrow .pill, .del-btn, .cal-cell, .set-row[data-action], .coach-teaser[data-action], .row-del, .row-edit, .add-log-btn, .stepper-value[data-action], .today-box-head";
 
 function clearPressed() {
   document.querySelectorAll(".pressed").forEach((el) => el.classList.remove("pressed"));

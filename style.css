@@ -25,6 +25,7 @@
   -webkit-tap-highlight-color: transparent;
   user-select: none;
   -webkit-user-select: none;
+  touch-action: manipulation;
 }
 
 html, body {
@@ -207,6 +208,25 @@ body {
   text-align: center;
 }
 .stepper-value .unit { font-size: 26px; font-weight: 600; color: var(--text-3); margin-left: 6px; }
+.stepper-value[data-action] { cursor: pointer; border-radius: var(--r-md); transition: background var(--fast); }
+.stepper-value[data-action]:active, .stepper-value[data-action].pressed { background: var(--bg-elev-press); }
+
+.draft-num-input {
+  font: inherit;
+  font-size: clamp(56px, 16vw, 72px);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid var(--accent);
+  text-align: center;
+  width: 2.2em;
+  outline: none;
+  padding: 0;
+  -webkit-appearance: none;
+}
 
 .stepper-row {
   display: flex;
@@ -445,7 +465,34 @@ body {
   font-size: 14px;
   color: var(--text-2);
 }
-.today-box h3 { margin: 0 0 8px; font-size: 12px; font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; }
+.today-box h3 { margin: 0; font-size: 12px; font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; }
+.today-box-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+  margin: -2px -4px;
+  padding: 2px 4px;
+  border-radius: var(--r-sm);
+  transition: background var(--fast);
+}
+.today-box-head:active, .today-box-head.pressed { background: var(--bg-elev-press); }
+.today-chevron {
+  color: var(--text-3);
+  font-size: 13px;
+  flex-shrink: 0;
+  transition: transform 0.18s ease;
+}
+.today-box.collapsed .today-chevron { transform: rotate(-90deg); }
+.today-entries {
+  overflow: hidden;
+  max-height: 1600px;
+  opacity: 1;
+  margin-top: 8px;
+  transition: max-height 0.22s ease, opacity 0.18s ease, margin-top 0.22s ease;
+}
+.today-box.collapsed .today-entries { max-height: 0; opacity: 0; margin-top: 0; }
 .today-box .entry { display: flex; flex-direction: column; gap: 7px; padding: 10px 0; border-bottom: 1px solid var(--border); }
 .today-box .entry:first-child { padding-top: 0; }
 .today-box .entry:last-child { padding-bottom: 0; border-bottom: none; }
