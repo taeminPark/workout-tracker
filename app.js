@@ -895,10 +895,18 @@ function attachDialEvents() {
     return (Math.atan2(clientY - cy, clientX - cx) * 180) / Math.PI;
   }
 
+  function pulse(el) {
+    if (!el) return;
+    el.classList.remove("dial-pulse");
+    void el.offsetWidth; // restart the animation even if it's already mid-pulse
+    el.classList.add("dial-pulse");
+  }
+
   function cycleWeightStep() {
     const idx = WEIGHT_STEP_OPTIONS.indexOf(S.weightStep);
     S.weightStep = WEIGHT_STEP_OPTIONS[(idx + 1) % WEIGHT_STEP_OPTIONS.length];
     if (centerValEl) centerValEl.textContent = `${S.weightStep}kg`;
+    pulse(centerValEl);
     if (navigator.vibrate) navigator.vibrate([5, 40, 5]);
     playDialTick();
   }
@@ -915,6 +923,7 @@ function attachDialEvents() {
       S.draftWeight = roundTo(S.draftWeight + S.weightStep, 2);
       accum -= STEP_DEG;
       if (numEl) numEl.textContent = S.draftWeight;
+      pulse(numEl);
       if (navigator.vibrate) navigator.vibrate(4);
       playDialTick();
     }
@@ -922,6 +931,7 @@ function attachDialEvents() {
       S.draftWeight = Math.max(0, roundTo(S.draftWeight - S.weightStep, 2));
       accum += STEP_DEG;
       if (numEl) numEl.textContent = S.draftWeight;
+      pulse(numEl);
       if (navigator.vibrate) navigator.vibrate(4);
       playDialTick();
     }
@@ -1072,7 +1082,7 @@ function renderSettings() {
       <input id="set-path" type="text" value="${esc(s.path || "data/log.json")}" />
     </div>
 
-    <button class="confirm-btn" style="margin-left:auto;margin-right:auto;" data-action="save-settings">저장</button>
+    <button class="confirm-btn" data-action="save-settings">저장</button>
     <button class="big-btn ghost" style="margin-top:10px" data-action="sync-now" ${S.syncing ? "disabled" : ""}>${
     S.syncing ? "동기화 중…" : "지금 GitHub 동기화"
   }</button>
