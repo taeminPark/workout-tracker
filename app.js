@@ -1111,6 +1111,7 @@ function attachDialEvents() {
       mode = "tap";
     } else {
       mode = "rotate";
+      knob.style.transition = ""; // cancel any leftover snap-back easing so this drag tracks the finger instantly
       dial.classList.add("grabbing");
       lastAngle = angleAt(e.clientX, e.clientY);
       accum = 0;
@@ -1191,16 +1192,17 @@ function renderManage() {
       <label>분류</label>
       <input id="new-ex-cat" type="text" placeholder="예: 하체" value="기타" />
     </div>
-    <div class="form-row">
+    <div class="form-row new-ex-options">
       <label class="noweight-check">
         <input type="checkbox" id="new-ex-noweight" />
-        <span>횟수운동 (예: 플랭크, 복근운동)</span>
+        <span>횟수운동</span>
       </label>
+      <span class="manage-weight" id="new-ex-weight-row">
+        <input id="new-ex-weight" type="number" inputmode="decimal" step="2.5" min="0" value="20" class="weight-input" />
+        <span class="unit-sm">kg</span>
+      </span>
     </div>
-    <div class="form-row" id="new-ex-weight-row">
-      <label>시작 무게 (kg)</label>
-      <input id="new-ex-weight" type="number" inputmode="decimal" step="2.5" min="0" value="20" />
-    </div>
+    <div class="new-ex-hint">횟수운동: 플랭크, 복근운동처럼 무게 없이 횟수만 기록하는 종목</div>
     <button class="confirm-btn" data-action="add-exercise">추가</button>
   `;
 }

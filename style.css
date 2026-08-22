@@ -472,15 +472,20 @@ body {
   justify-content: space-between;
   gap: 8px;
   cursor: pointer;
-  margin: -2px -4px;
-  padding: 2px 4px;
+  margin: -6px -6px 0;
+  padding: 6px;
   border-radius: var(--r-sm);
   transition: background var(--fast);
 }
 .today-box-head:active, .today-box-head.pressed { background: var(--bg-elev-press); }
 .today-chevron {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: var(--text-3);
-  font-size: 13px;
+  font-size: 19px;
   flex-shrink: 0;
   transition: transform 0.18s ease;
 }
@@ -489,7 +494,7 @@ body {
   overflow: hidden;
   max-height: 1600px;
   opacity: 1;
-  margin-top: 8px;
+  margin-top: 16px;
   transition: max-height 0.22s ease, opacity 0.18s ease, margin-top 0.22s ease;
 }
 .today-box.collapsed .today-entries { max-height: 0; opacity: 0; margin-top: 0; }
@@ -581,7 +586,7 @@ label.noweight-check {
   accent-color: var(--accent);
   flex-shrink: 0;
 }
-.manage-row .weight-input {
+.manage-row .weight-input, .new-ex-options .weight-input {
   width: 56px;
   background: var(--bg-elev-press);
   border: 1px solid var(--border);
@@ -593,11 +598,19 @@ label.noweight-check {
   text-align: center;
   font-family: inherit;
 }
-.manage-row .unit-sm {
+.manage-row .unit-sm, .new-ex-options .unit-sm {
   font-size: 12px;
   color: var(--text-3);
   flex-shrink: 0;
 }
+.new-ex-options {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.new-ex-options .manage-weight { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.new-ex-hint { font-size: 12px; color: var(--text-3); margin: -8px 0 16px; }
 .manage-row .del-btn {
   background: rgba(255, 69, 58, 0.16);
   color: var(--red);
