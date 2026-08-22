@@ -1066,9 +1066,24 @@ function attachDialEvents() {
   }
 
   function snapToNearestTick() {
-    const snapped = Math.round(rotation / STEP_DEG) * STEP_DEG;
+    // accum is the leftover rotation since the last committed weight step, so
+    // rotation - accum is always the exact tick angle of that last committed step.
+    const lastCommittedAngle = rotation - accum;
+    let extraSteps = 0;
+    if (accum >= STEP_DEG / 2) extraSteps = 1;
+    else if (accum <= -STEP_DEG / 2) extraSteps = -1;
+
+    if (extraSteps > 0) {
+      S.draftWeight = roundTo(S.draftWeight + S.weightStep, 2);
+    } else if (extraSteps < 0) {
+      S.draftWeight = Math.max(0, roundTo(S.draftWeight - S.weightStep, 2));
+    }
+    if (extraSteps !== 0 && numEl) numEl.textContent = S.draftWeight;
+
+    const snapped = lastCommittedAngle + extraSteps * STEP_DEG;
     const landed = snapped !== rotation;
     rotation = snapped;
+    accum = 0;
     knob.style.transition = "transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1)";
     knob.style.transform = `rotate(${rotation}deg)`;
     const clearTransition = () => {
@@ -1078,7 +1093,9 @@ function attachDialEvents() {
     knob.addEventListener("transitionend", clearTransition);
     if (landed) {
       pulse(notchEl);
+      if (extraSteps !== 0) pulse(numEl);
       if (navigator.vibrate) navigator.vibrate(6);
+      if (extraSteps !== 0) playDialTick();
     }
   }
 
