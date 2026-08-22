@@ -656,6 +656,46 @@ label.noweight-check {
 }
 .day-detail .add-log-btn:active, .day-detail .add-log-btn.pressed { background: var(--bg-elev-press); transform: scale(0.95); }
 
+.day-set-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 14px 16px;
+}
+.day-set-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 11px;
+}
+.day-set-name { font-size: 16px; font-weight: 700; }
+.day-set-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.day-set-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 12px 6px 8px;
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+.day-set-chip .chip-n {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--bg-elev-press);
+  color: var(--text-3);
+  font-size: 10px;
+  font-weight: 700;
+}
+
 /* ---------- coaching ---------- */
 
 .coach-teaser {

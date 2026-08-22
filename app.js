@@ -594,7 +594,11 @@ async function syncToGitHub() {
       throw new Error(`조회 실패 (${getRes.status})`);
     }
 
-    const content = JSON.stringify(getLogs(), null, 2);
+    const content = JSON.stringify(
+      { logs: getLogs(), exercises: getExercises(), appTitle: s.appTitle || "운동 기록" },
+      null,
+      2
+    );
     const body = {
       message: `운동 기록 업데이트 ${todayKey()}`,
       content: utf8ToB64(content),
@@ -653,8 +657,19 @@ async function loadFromGitHub() {
       throw new Error(`조회 실패 (${getRes.status})`);
     }
     const data = await getRes.json();
-    const logs = JSON.parse(b64ToUtf8(data.content));
-    saveLogs(logs);
+    const parsed = JSON.parse(b64ToUtf8(data.content));
+
+    if (parsed && typeof parsed === "object" && parsed.logs && typeof parsed.logs === "object") {
+      saveLogs(parsed.logs);
+      if (Array.isArray(parsed.exercises)) saveExercises(parsed.exercises);
+      if (typeof parsed.appTitle === "string" && parsed.appTitle.trim()) {
+        s.appTitle = parsed.appTitle.trim();
+        document.title = s.appTitle;
+      }
+    } else {
+      // 이전 백업 형식 (log.json이 날짜별 기록만 담고 있던 시절) 호환
+      saveLogs(parsed);
+    }
 
     s.lastRestore = Date.now();
     s.lastRestoreOk = true;
@@ -713,6 +728,10 @@ function renderTopbar(title, opts) {
 function summarizeEntry(entry) {
   if (entry.noWeight) return entry.sets.map((s) => `${s.reps}회`).join(", ");
   return entry.sets.map((s) => `${s.weight}×${s.reps}`).join(", ");
+}
+
+function setChipLabel(entry, s) {
+  return entry.noWeight ? `${s.reps}회` : `${s.weight}kg × ${s.reps}회`;
 }
 
 function coachingTeaserHtml() {
@@ -1293,12 +1312,20 @@ function renderCalendar() {
             ${entries
               .map(
                 (e, i) => h`
-              <div class="set-row">
-                <span class="set-idx">${esc(e.exerciseName)}</span>
-                <span class="row-right">
-                  <span class="set-val">${esc(summarizeEntry(e))}</span>
+              <div class="day-set-card">
+                <div class="day-set-head">
+                  <span class="day-set-name">${esc(e.exerciseName)}</span>
                   <button class="row-del" data-action="del-log-entry" data-date="${S.calSelected}" data-idx="${i}">✕</button>
-                </span>
+                </div>
+                <div class="day-set-chips">
+                  ${e.sets
+                    .map(
+                      (s, si) => h`
+                    <span class="day-set-chip"><span class="chip-n">${si + 1}</span>${esc(setChipLabel(e, s))}</span>
+                  `
+                    )
+                    .join("")}
+                </div>
               </div>
             `
               )
