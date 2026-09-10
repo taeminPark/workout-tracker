@@ -74,7 +74,7 @@ function getSettings() {
     lastSync: null,
     lastSyncOk: null,
     geminiKey: "",
-    geminiModel: "gemini-2.0-flash",
+    geminiModel: "gemini-flash-lite-latest",
   });
 }
 function saveSettings(s) {
@@ -120,11 +120,20 @@ let S = {
   logTargetDate: null,
   editingLog: null, // { date, idx } when editing an already-saved log entry
   todayCollapsed: false,
+  voiceStatus: "idle", // 'idle' | 'listening' | 'parsing' | 'review' | 'error' | 'unsupported'
+  voiceTranscript: "",
+  voiceParsed: null, // array of { exerciseId, exerciseName, noWeight, sets } once parsed
+  voiceError: null,
+  geminiModels: null, // array of model ids once fetched via "사용 가능한 모델 확인"
+  geminiModelsLoading: false,
+  geminiModelsError: null,
 };
 
 const WEIGHT_STEP = 2.5;
 const REPS_STEP = 1;
 let settingsSavedTimer = null;
+let voiceRecognition = null;
+let voiceFinalText = "";
 
 function resetSession() {
   S.currentExercise = null;
@@ -206,6 +215,7 @@ function startEditLogEntry(date, idx) {
 function goHome() {
   resetSession();
   S.screen = "home";
+  navDirection = "back";
   render();
 }
 
@@ -280,6 +290,7 @@ function editSet(index) {
 }
 
 function finishExercise() {
+  navDirection = "back"; // completing a flow retraces the path back to where it started
   if (S.editingLog) {
     const date = S.editingLog.date;
     commitExercise();
@@ -512,25 +523,77 @@ ${data}
 과도하게 formal하지 않게, 친근하지만 전문적인 트레이너 톤으로 작성하세요. 전체 400~600자 내외로 간결하게, 마크다운 헤더(##) 없이 자연스러운 문단과 "-"로 시작하는 불릿만 사용하세요.`;
 }
 
-async function callGemini(promptText) {
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function callGemini(promptText, opts) {
   const s = getSettings();
   const key = s.geminiKey;
   if (!key) throw new Error("MISSING_KEY");
-  const model = s.geminiModel || "gemini-2.0-flash";
+  const model = s.geminiModel || "gemini-flash-lite-latest";
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-goog-api-key": key },
-    body: JSON.stringify({ contents: [{ parts: [{ text: promptText }] }] }),
-  });
-  if (!res.ok) {
+  const body = { contents: [{ parts: [{ text: promptText }] }] };
+  if (opts && opts.json) body.generationConfig = { responseMimeType: "application/json" };
+
+  const maxAttempts = 3;
+  let lastErr;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const text = (data.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("");
+      if (!text) throw new Error("Gemini 응답에 텍스트가 없습니다");
+      return text.trim();
+    }
     const t = await res.text();
+    // 503(과부하)/429(요청 과다)는 보통 몇 초 안에 풀리는 일시적 오류라 재시도해볼 가치가 있다.
+    if ((res.status === 503 || res.status === 429) && attempt < maxAttempts) {
+      lastErr = new Error(`Gemini 호출 실패 (${res.status}) ${t.slice(0, 150)}`);
+      await sleep(attempt * 1200);
+      continue;
+    }
     throw new Error(`Gemini 호출 실패 (${res.status}) ${t.slice(0, 150)}`);
   }
-  const data = await res.json();
-  const text = (data.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("");
-  if (!text) throw new Error("Gemini 응답에 텍스트가 없습니다");
-  return text.trim();
+  throw lastErr;
+}
+
+async function listGeminiModels() {
+  const s = getSettings();
+  if (!s.geminiKey) {
+    S.geminiModelsError = "MISSING_KEY";
+    S.geminiModels = null;
+    render();
+    return;
+  }
+  S.geminiModelsLoading = true;
+  S.geminiModelsError = null;
+  S.geminiModels = null;
+  render();
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(s.geminiKey)}`
+    );
+    if (!res.ok) {
+      const t = await res.text();
+      throw new Error(`목록 조회 실패 (${res.status}) ${t.slice(0, 150)}`);
+    }
+    const data = await res.json();
+    const models = (data.models || [])
+      .filter((m) => (m.supportedGenerationMethods || []).includes("generateContent"))
+      .map((m) => (m.name || "").replace(/^models\//, ""))
+      .filter(Boolean)
+      .sort();
+    S.geminiModels = models;
+  } catch (e) {
+    S.geminiModelsError = String(e.message || e);
+  }
+  S.geminiModelsLoading = false;
+  render();
 }
 
 async function generateAICoaching() {
@@ -548,6 +611,203 @@ async function generateAICoaching() {
   }
   S.aiLoading = false;
   render();
+}
+
+/* ---------- voice log (Web Speech API + Gemini parsing) ---------- */
+
+function getSpeechRecognitionCtor() {
+  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+}
+
+function startVoiceListening() {
+  const Ctor = getSpeechRecognitionCtor();
+  if (!Ctor) {
+    S.voiceStatus = "unsupported";
+    render();
+    return;
+  }
+  voiceFinalText = "";
+  S.voiceStatus = "listening";
+  S.voiceTranscript = "";
+  S.voiceError = null;
+  render();
+
+  const recognition = new Ctor();
+  voiceRecognition = recognition;
+  recognition.lang = "ko-KR";
+  recognition.continuous = true;
+  recognition.interimResults = true;
+
+  recognition.onresult = (e) => {
+    let interim = "";
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const r = e.results[i];
+      if (r.isFinal) voiceFinalText += r[0].transcript;
+      else interim += r[0].transcript;
+    }
+    S.voiceTranscript = (voiceFinalText + " " + interim).trim();
+    render();
+  };
+  recognition.onerror = (e) => {
+    S.voiceStatus = "error";
+    S.voiceError = e.error === "not-allowed" ? "마이크 권한을 허용해주세요." : `음성 인식 오류: ${e.error}`;
+    voiceRecognition = null;
+    render();
+  };
+  recognition.onend = () => {
+    if (voiceRecognition !== recognition) return; // superseded by a newer session
+    voiceRecognition = null;
+    if (S.voiceStatus === "listening") finishVoiceListening();
+  };
+
+  try {
+    recognition.start();
+  } catch (err) {
+    S.voiceStatus = "error";
+    S.voiceError = String(err.message || err);
+    voiceRecognition = null;
+    render();
+  }
+}
+
+function stopVoiceListening() {
+  if (voiceRecognition) {
+    try {
+      voiceRecognition.stop();
+    } catch (e) {}
+  }
+}
+
+function finishVoiceListening() {
+  const text = voiceFinalText.trim() || S.voiceTranscript.trim();
+  if (!text) {
+    S.voiceStatus = "idle";
+    S.voiceTranscript = "";
+    render();
+    return;
+  }
+  parseVoiceTranscript(text);
+}
+
+function stripJsonFence(text) {
+  return text
+    .trim()
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/, "")
+    .replace(/```$/, "")
+    .trim();
+}
+
+function normalizeVoiceItem(it, exercises) {
+  if (!it || !it.exerciseName) return null;
+  const rawName = String(it.exerciseName).trim();
+  if (!rawName) return null;
+  const noWeight = !!it.noWeight;
+  const sets = (Array.isArray(it.sets) ? it.sets : [])
+    .map((s) => ({
+      weight: noWeight ? 0 : Math.max(0, roundTo(Number(s.weight) || 0, 2)),
+      reps: Math.max(0, Math.round(Number(s.reps) || 0)),
+    }))
+    .filter((s) => s.reps > 0);
+  if (sets.length === 0) return null;
+  const match =
+    exercises.find((e) => e.name === rawName) ||
+    exercises.find((e) => e.name.replace(/\s+/g, "") === rawName.replace(/\s+/g, ""));
+  return {
+    exerciseId: match ? match.id : null,
+    exerciseName: match ? match.name : rawName,
+    noWeight: match ? !!match.noWeight : noWeight,
+    sets,
+  };
+}
+
+function buildVoiceParsePrompt(text, exercises) {
+  const names = exercises.map((e) => e.name).join(", ");
+  return `당신은 운동 기록 음성 인식 도우미입니다. 아래는 사용자가 방금 마친 운동을 한국어로 말한 내용을 텍스트로 받아적은 것입니다.
+
+사용자 발화: "${text}"
+
+등록된 운동 종목: ${names}
+
+이 발화를 분석해서 사용자가 말한 운동과 세트별 무게(kg)·횟수를 다음 JSON 배열 형식으로만 답하세요. 다른 설명이나 마크다운 코드블록 없이 JSON 배열만 출력하세요.
+
+[{"exerciseName": "종목 이름", "noWeight": false, "sets": [{"weight": 40, "reps": 15}]}]
+
+규칙:
+- 종목 이름은 등록된 목록에 있으면 그 이름을 그대로 쓰고, 없으면 발화에서 언급된 이름을 그대로 쓰세요.
+- "N세트"라고만 말하고 이후 무게·횟수가 N번 반복되면 각각을 별도 세트로 만드세요.
+- "키로"/"킬로"/"kg"은 모두 kg 단위입니다.
+- 무게 언급 없이 횟수만 있는 맨몸 운동(플랭크, 복근 등)은 noWeight를 true로 하고 각 세트는 {"reps": N}만 채우세요 (weight 필드는 생략).
+- 여러 운동을 말했다면 배열에 각각 항목을 만드세요.
+- 운동 정보를 전혀 알아들을 수 없으면 빈 배열 []을 반환하세요.`;
+}
+
+async function parseVoiceTranscript(text) {
+  const exercises = getExercises();
+  S.voiceStatus = "parsing";
+  render();
+  try {
+    const raw = await callGemini(buildVoiceParsePrompt(text, exercises), { json: true });
+    const parsed = JSON.parse(stripJsonFence(raw));
+    if (!Array.isArray(parsed)) throw new Error("잘못된 응답 형식입니다");
+    const items = parsed.map((it) => normalizeVoiceItem(it, exercises)).filter(Boolean);
+    if (items.length === 0) {
+      S.voiceStatus = "error";
+      S.voiceError = "운동 내용을 알아듣지 못했어요. 다시 시도해주세요.";
+      render();
+      return;
+    }
+    S.voiceParsed = items;
+    S.voiceStatus = "review";
+  } catch (e) {
+    S.voiceStatus = "error";
+    S.voiceError = e.message === "MISSING_KEY" ? "MISSING_KEY" : String(e.message || e);
+  }
+  render();
+}
+
+function confirmVoiceLog() {
+  if (!S.voiceParsed || S.voiceParsed.length === 0) return;
+  const exercises = getExercises();
+  const logs = getLogs();
+  const lastUsed = getLastUsed();
+  const key = todayKey();
+  if (!logs[key]) logs[key] = [];
+  let exListChanged = false;
+
+  S.voiceParsed.forEach((item) => {
+    let ex = (item.exerciseId && exercises.find((e) => e.id === item.exerciseId)) || exercises.find((e) => e.name === item.exerciseName);
+    if (!ex) {
+      ex = {
+        id: "custom_" + item.exerciseName.replace(/\s+/g, "_") + "_" + Date.now() + "_" + Math.floor(Math.random() * 1000),
+        name: item.exerciseName,
+        cat: "기타",
+        startWeight: item.noWeight ? 0 : item.sets[0].weight,
+        noWeight: item.noWeight,
+      };
+      exercises.push(ex);
+      exListChanged = true;
+    }
+    logs[key].push({
+      exerciseId: ex.id,
+      exerciseName: ex.name,
+      noWeight: !!ex.noWeight,
+      sets: item.sets.map((s) => ({ weight: s.weight, reps: s.reps })),
+      ts: Date.now(),
+    });
+    const last = item.sets[item.sets.length - 1];
+    lastUsed[ex.id] = { weight: last.weight, reps: last.reps };
+  });
+
+  saveLogs(logs);
+  saveLastUsed(lastUsed);
+  if (exListChanged) saveExercises(exercises);
+  syncToGitHub();
+
+  S.voiceStatus = "idle";
+  S.voiceParsed = null;
+  S.voiceTranscript = "";
+  goHome();
 }
 
 /* ---------- GitHub sync ---------- */
@@ -704,7 +964,31 @@ function esc(str) {
   return d.innerHTML;
 }
 
+let lastScreen = S.screen;
+let navDirection = "forward"; // set to "back" right before a render() that should retrace its entry path
+
 function render() {
+  const screenChanged = S.screen !== lastScreen;
+  const direction = navDirection;
+  navDirection = "forward";
+
+  if (!screenChanged || typeof document.startViewTransition !== "function") {
+    renderScreen();
+    lastScreen = S.screen;
+    return;
+  }
+
+  document.documentElement.dataset.navDir = direction;
+  const transition = document.startViewTransition(() => {
+    renderScreen();
+    lastScreen = S.screen;
+  });
+  transition.finished.finally(() => {
+    delete document.documentElement.dataset.navDir;
+  });
+}
+
+function renderScreen() {
   if (S.screen === "home") return renderHome();
   if (S.screen === "setcount") return renderSetCount();
   if (S.screen === "flow") return renderFlow();
@@ -714,6 +998,7 @@ function render() {
   if (S.screen === "calendar") return renderCalendar();
   if (S.screen === "coaching") return renderCoaching();
   if (S.screen === "aicoaching") return renderAICoaching();
+  if (S.screen === "voicelog") return renderVoiceLog();
   if (S.screen === "backfillpick") return renderBackfillPick();
 }
 
@@ -813,6 +1098,8 @@ function renderHome() {
     </div>
   `;
 
+  const voiceCta = h`<button class="voice-cta-btn" data-action="open-voice-log">🎙️ 음성기록</button>`;
+
   let gridHtml = "";
   cats.forEach((cat) => {
     gridHtml += `<div class="category-label">${esc(cat)}</div>`;
@@ -845,6 +1132,7 @@ function renderHome() {
 
   app.innerHTML = h`
     ${renderTopbar(appTitle)}
+    ${voiceCta}
     ${quickrow}
     ${coachingTeaserHtml()}
     ${todayHtml}
@@ -1242,10 +1530,34 @@ function renderSettings() {
     </div>
     <div class="form-row">
       <label>모델</label>
-      <input id="set-gemini-model" type="text" value="${esc(s.geminiModel || "gemini-2.0-flash")}" />
+      <input id="set-gemini-model" type="text" value="${esc(s.geminiModel || "gemini-flash-lite-latest")}" />
     </div>
-    <div class="sync-status" style="text-align:left;margin-top:-6px;margin-bottom:6px;">
-      aistudio.google.com/apikey 에서 무료로 키를 발급받을 수 있어요.
+    <button class="big-btn ghost" style="margin-top:-4px" data-action="check-gemini-models" ${
+      S.geminiModelsLoading ? "disabled" : ""
+    }>${S.geminiModelsLoading ? "확인 중…" : "사용 가능한 모델 확인"}</button>
+    ${
+      S.geminiModelsError
+        ? `<div class="sync-status err">${esc(
+            S.geminiModelsError === "MISSING_KEY" ? "키를 먼저 입력해주세요." : S.geminiModelsError
+          )}</div>`
+        : ""
+    }
+    ${
+      S.geminiModels
+        ? h`
+      <div class="today-box" style="margin-top:8px">
+        <div class="sync-status" style="text-align:left;margin-top:0;">모델을 눌러 위 입력칸에 채우세요:</div>
+        <div class="model-pick-list">
+          ${S.geminiModels
+            .map((m) => `<button class="pill" data-action="pick-gemini-model" data-name="${esc(m)}">${esc(m)}</button>`)
+            .join("")}
+        </div>
+      </div>
+    `
+        : ""
+    }
+    <div class="sync-status" style="text-align:left;margin-top:-2px;margin-bottom:6px;">
+      aistudio.google.com/apikey 에서 무료로 키를 발급받을 수 있어요. 모델 이름은 구글이 종종 변경/폐기하니 "모델 확인" 버튼으로 최신 목록을 확인하세요.
     </div>
 
     <div class="category-label" style="text-transform:none">GitHub 백업</div>
@@ -1349,6 +1661,82 @@ function renderAICoaching() {
 
   app.innerHTML = h`
     ${renderTopbar("AI 코칭", { onBack: true })}
+    ${body}
+  `;
+}
+
+function renderVoiceLog() {
+  const s = getSettings();
+  let body;
+
+  if (!s.geminiKey) {
+    body = h`
+      <div class="coach-summary">
+        음성 기록을 쓰려면 Gemini API 키가 필요해요.<br><br>
+        1. aistudio.google.com/apikey 에서 무료로 발급<br>
+        2. 설정 화면에서 키 입력 후 저장
+      </div>
+      <button class="confirm-btn" data-action="settings">설정으로 이동</button>
+    `;
+  } else if (S.voiceStatus === "unsupported") {
+    body = `<div class="coach-summary">이 브라우저는 음성 인식을 지원하지 않아요. 안드로이드 Chrome에서 사용해주세요.</div>`;
+  } else if (S.voiceStatus === "review" && S.voiceParsed) {
+    body = h`
+      <div class="today-box">
+        <div class="today-entries">
+          ${S.voiceParsed
+            .map(
+              (item, i) => h`
+            <div class="entry">
+              <div class="entry-top">
+                <span class="entry-name">${esc(item.exerciseName)}${
+                item.exerciseId ? "" : ` <span class="voice-new-badge">신규</span>`
+              }</span>
+                <span class="entry-actions">
+                  <button class="row-del" data-action="voice-remove-item" data-idx="${i}">✕</button>
+                </span>
+              </div>
+              <div class="entry-sets">
+                ${item.sets
+                  .map((st) => `<span class="set-chip">${item.noWeight ? `${st.reps}회` : `${st.weight}kg × ${st.reps}회`}</span>`)
+                  .join("")}
+              </div>
+            </div>
+          `
+            )
+            .join("")}
+        </div>
+      </div>
+      <button class="confirm-btn" data-action="voice-save">오늘 기록에 저장</button>
+      <button class="big-btn ghost" style="margin-top:10px" data-action="voice-retry">다시 녹음</button>
+    `;
+  } else if (S.voiceStatus === "parsing") {
+    body = `<div class="coach-summary">방금 말한 내용을 분석하고 있어요...</div>`;
+  } else if (S.voiceStatus === "error") {
+    body = h`
+      <div class="coach-summary" style="color:var(--red)">${
+        S.voiceError === "MISSING_KEY"
+          ? "Gemini API 키를 설정에서 입력해주세요."
+          : esc(S.voiceError || "오류가 발생했어요.")
+      }</div>
+      <button class="confirm-btn" data-action="voice-retry">다시 시도</button>
+    `;
+  } else {
+    const listening = S.voiceStatus === "listening";
+    body = h`
+      <div class="voice-mic-wrap">
+        <button class="voice-mic-btn${listening ? " listening" : ""}" data-action="voice-toggle">${
+      listening ? "⏹" : "🎙️"
+    }</button>
+        <div class="voice-hint">${listening ? "듣고 있어요… 끝나면 다시 눌러주세요" : "눌러서 오늘 한 운동을 말해보세요"}</div>
+        ${listening ? `<div class="voice-transcript">${esc(S.voiceTranscript || "")}</div>` : ""}
+        <div class="voice-example">예시: "벤치프레스 4세트, 40키로 15개, 50키로 15개, 60키로 12개, 70키로 10개"</div>
+      </div>
+    `;
+  }
+
+  app.innerHTML = h`
+    ${renderTopbar("음성기록", { onBack: true })}
     ${body}
   `;
 }
@@ -1527,6 +1915,55 @@ app.addEventListener("click", (e) => {
     case "ai-generate":
       generateAICoaching();
       break;
+    case "check-gemini-models": {
+      const keyInput = document.getElementById("set-gemini-key");
+      if (keyInput) {
+        const s = getSettings();
+        s.geminiKey = keyInput.value.trim();
+        saveSettings(s);
+      }
+      listGeminiModels();
+      break;
+    }
+    case "pick-gemini-model": {
+      const modelInput = document.getElementById("set-gemini-model");
+      if (modelInput) modelInput.value = el.dataset.name;
+      break;
+    }
+    case "open-voice-log":
+      S.voiceStatus = "idle";
+      S.voiceParsed = null;
+      S.voiceTranscript = "";
+      S.voiceError = null;
+      S.screen = "voicelog";
+      render();
+      break;
+    case "voice-toggle":
+      if (S.voiceStatus === "listening") stopVoiceListening();
+      else startVoiceListening();
+      break;
+    case "voice-remove-item": {
+      const idx = Number(el.dataset.idx);
+      if (S.voiceParsed) {
+        S.voiceParsed.splice(idx, 1);
+        if (S.voiceParsed.length === 0) {
+          S.voiceStatus = "idle";
+          S.voiceParsed = null;
+        }
+        render();
+      }
+      break;
+    }
+    case "voice-save":
+      confirmVoiceLog();
+      break;
+    case "voice-retry":
+      S.voiceStatus = "idle";
+      S.voiceParsed = null;
+      S.voiceTranscript = "";
+      S.voiceError = null;
+      render();
+      break;
     case "pick-exercise": {
       const exercises = getExercises();
       const ex = exercises.find((x) => x.id === el.dataset.id);
@@ -1593,7 +2030,7 @@ app.addEventListener("click", (e) => {
       const s = getSettings();
       s.appTitle = document.getElementById("set-title").value.trim() || "운동 기록";
       s.geminiKey = document.getElementById("set-gemini-key").value.trim();
-      s.geminiModel = document.getElementById("set-gemini-model").value.trim() || "gemini-2.0-flash";
+      s.geminiModel = document.getElementById("set-gemini-model").value.trim() || "gemini-flash-lite-latest";
       s.token = document.getElementById("set-token").value.trim();
       s.owner = document.getElementById("set-owner").value.trim();
       s.repo = document.getElementById("set-repo").value.trim();
@@ -1656,6 +2093,7 @@ function roundTo(n, decimals) {
 }
 
 function handleBack() {
+  navDirection = "back";
   if (S.screen === "setcount") {
     goHome();
   } else if (S.screen === "flow") {
@@ -1692,6 +2130,13 @@ function handleBack() {
     S.logTargetDate = null;
     S.screen = "calendar";
     render();
+  } else if (S.screen === "voicelog") {
+    stopVoiceListening();
+    S.voiceStatus = "idle";
+    S.voiceParsed = null;
+    S.voiceTranscript = "";
+    S.screen = "home";
+    render();
   } else if (
     S.screen === "manage" ||
     S.screen === "settings" ||
@@ -1706,7 +2151,7 @@ function handleBack() {
 
 /* ---------- press feedback (iOS Safari doesn't reliably fire :active on tap) ---------- */
 
-const PRESSABLE = ".big-btn, .confirm-btn, .stepper-btn, .iconbtn, .quickrow .pill, .del-btn, .cal-cell, .set-row[data-action], .coach-teaser[data-action], .row-del, .row-edit, .add-log-btn, .stepper-value[data-action], .today-box-head";
+const PRESSABLE = ".big-btn, .confirm-btn, .stepper-btn, .iconbtn, .quickrow .pill, .del-btn, .cal-cell, .set-row[data-action], .coach-teaser[data-action], .row-del, .row-edit, .add-log-btn, .stepper-value[data-action], .today-box-head, .voice-cta-btn, .voice-mic-btn, .model-pick-list .pill";
 
 function clearPressed() {
   document.querySelectorAll(".pressed").forEach((el) => el.classList.remove("pressed"));
