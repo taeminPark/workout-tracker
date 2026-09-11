@@ -67,6 +67,8 @@ function saveLogs(obj) {
 function getSettings() {
   return loadJSON(LS.settings, {
     appTitle: "운동 기록",
+    heightCm: "",
+    weightKg: "",
     token: "",
     owner: "taeminPark",
     repo: "workout-data",
@@ -509,13 +511,21 @@ function buildWeeklyDataText() {
   return lines.join("\n");
 }
 
+function buildProfileText() {
+  const s = getSettings();
+  const lines = [];
+  if (s.heightCm) lines.push(`키 ${s.heightCm}cm`);
+  if (s.weightKg) lines.push(`몸무게 ${s.weightKg}kg`);
+  return lines.length ? `[회원 정보] ${lines.join(", ")}\n` : "";
+}
+
 function buildGeminiPrompt() {
   const data = buildWeeklyDataText();
   return `당신은 전문 웨이트 트레이닝 코치입니다. 아래는 회원의 최근 2주간 운동 기록 요약입니다 (볼륨=무게×횟수 합, 1RM은 Epley 공식 추정치).
 
-${data}
+${buildProfileText()}${data}
 
-이 데이터를 바탕으로 한국어로 다음 내용을 작성해주세요:
+이 데이터를 바탕으로 한국어로 다음 내용을 작성해주세요 (회원 정보가 주어졌다면 체형에 맞는 조언이 되도록 참고하세요):
 1. 이번 주 총평 (2~3문장)
 2. 종목별 코멘트 (눈에 띄는 변화가 있는 종목 위주로, 각 1~2문장)
 3. 다음 주 운동 방향 제안 (구체적인 무게/횟수/부위 조언 포함, 불릿 3~5개)
@@ -966,22 +976,31 @@ function esc(str) {
 
 let lastScreen = S.screen;
 let navDirection = "forward"; // set to "back" right before a render() that should retrace its entry path
+let savedHomeScroll = 0; // scroll position of the home screen, restored on return so logging the next exercise doesn't require re-scrolling
+
+function renderAndRestoreScroll() {
+  renderScreen();
+  lastScreen = S.screen;
+  if (S.screen === "home") window.scrollTo(0, savedHomeScroll);
+}
 
 function render() {
   const screenChanged = S.screen !== lastScreen;
   const direction = navDirection;
   navDirection = "forward";
 
+  if (lastScreen === "home" && S.screen !== "home") {
+    savedHomeScroll = window.scrollY;
+  }
+
   if (!screenChanged || typeof document.startViewTransition !== "function") {
-    renderScreen();
-    lastScreen = S.screen;
+    renderAndRestoreScroll();
     return;
   }
 
   document.documentElement.dataset.navDir = direction;
   const transition = document.startViewTransition(() => {
-    renderScreen();
-    lastScreen = S.screen;
+    renderAndRestoreScroll();
   });
   transition.finished.finally(() => {
     delete document.documentElement.dataset.navDir;
@@ -1523,6 +1542,19 @@ function renderSettings() {
       <input id="set-title" type="text" placeholder="운동 기록" value="${esc(s.appTitle || "운동 기록")}" />
     </div>
 
+    <div class="category-label" style="text-transform:none">신체 정보</div>
+    <div class="form-row new-ex-options">
+      <span class="manage-weight">
+        <input id="set-height" type="number" inputmode="decimal" step="0.1" min="0" placeholder="키" class="weight-input" style="width:72px" value="${esc(s.heightCm || "")}" />
+        <span class="unit-sm">cm</span>
+      </span>
+      <span class="manage-weight">
+        <input id="set-weight" type="number" inputmode="decimal" step="0.1" min="0" placeholder="몸무게" class="weight-input" style="width:72px" value="${esc(s.weightKg || "")}" />
+        <span class="unit-sm">kg</span>
+      </span>
+    </div>
+    <div class="new-ex-hint">키/몸무게를 입력하면 AI 코칭이 체형에 맞춰 조언해줘요.</div>
+
     <div class="category-label" style="text-transform:none">AI 코칭 · Gemini</div>
     <div class="form-row">
       <label>Gemini API Key</label>
@@ -2029,6 +2061,8 @@ app.addEventListener("click", (e) => {
     case "save-settings": {
       const s = getSettings();
       s.appTitle = document.getElementById("set-title").value.trim() || "운동 기록";
+      s.heightCm = document.getElementById("set-height").value.trim();
+      s.weightKg = document.getElementById("set-weight").value.trim();
       s.geminiKey = document.getElementById("set-gemini-key").value.trim();
       s.geminiModel = document.getElementById("set-gemini-model").value.trim() || "gemini-flash-lite-latest";
       s.token = document.getElementById("set-token").value.trim();
@@ -2167,6 +2201,59 @@ document.addEventListener(
 document.addEventListener("pointerup", clearPressed, { passive: true });
 document.addEventListener("pointercancel", clearPressed, { passive: true });
 document.addEventListener("pointerleave", clearPressed, true);
+
+/* ---------- swipe-to-go-back (iOS-style left-edge swipe) ---------- */
+/* Detail screens only show a tappable back arrow; this lets a swipe from the
+   left edge trigger the same handleBack() so navigation feels native. */
+
+(function initSwipeBack() {
+  const EDGE_ZONE = 28; // px from the left edge that can start a back-swipe
+  const TRIGGER_PX = 70; // horizontal drag distance required to trigger back
+  const MAX_SLOPE = 0.6; // vertical/horizontal ratio allowed before it's treated as a vertical scroll
+
+  let tracking = false;
+  let pointerId = null;
+  let startX = 0;
+  let startY = 0;
+
+  function canGoBack() {
+    return !!document.querySelector('.topbar [data-action="back"]');
+  }
+
+  document.addEventListener(
+    "pointerdown",
+    (e) => {
+      if (e.pointerType === "mouse") return;
+      if (e.clientX > EDGE_ZONE) return;
+      if (!canGoBack()) return;
+      tracking = true;
+      pointerId = e.pointerId;
+      startX = e.clientX;
+      startY = e.clientY;
+    },
+    { passive: true }
+  );
+
+  document.addEventListener(
+    "pointerup",
+    (e) => {
+      if (!tracking || e.pointerId !== pointerId) return;
+      tracking = false;
+      const dx = e.clientX - startX;
+      const dy = Math.abs(e.clientY - startY);
+      if (dx > TRIGGER_PX && dy < dx * MAX_SLOPE) handleBack();
+    },
+    { passive: true }
+  );
+
+  document.addEventListener(
+    "pointercancel",
+    (e) => {
+      if (e.pointerId === pointerId) tracking = false;
+    },
+    { passive: true }
+  );
+})();
 
 /* ---------- service worker ---------- */
 
