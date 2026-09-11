@@ -282,6 +282,24 @@ function confirmRepsStep() {
   }
 }
 
+function backIntoPreviousSet() {
+  const index = S.flowIndex - 1;
+  const popped = S.sets.pop(); // the completed set we're stepping back into
+  S.flowIndex = index;
+  S.flowMode = "append";
+  if (popped) {
+    S.draftWeight = popped.weight;
+    S.draftReps = popped.reps;
+  } else {
+    const d = defaultsForIndex(index);
+    S.draftWeight = d.weight;
+    S.draftReps = d.reps;
+  }
+  S.phase = "reps"; // land on the step that was last confirmed for that set
+  S.screen = "flow";
+  render();
+}
+
 function addExtraSet() {
   S.targetSets = S.sets.length + 1;
   startSet(S.sets.length, "append");
@@ -2141,8 +2159,7 @@ function handleBack() {
       S.screen = "setcount";
       render();
     } else {
-      S.sets.pop();
-      startSet(S.flowIndex - 1, "append");
+      backIntoPreviousSet();
     }
   } else if (S.screen === "summary") {
     if (S.editingLog) {
