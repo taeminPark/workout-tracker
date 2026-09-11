@@ -2204,15 +2204,18 @@ document.addEventListener("pointerleave", clearPressed, true);
 
 /* ---------- swipe-to-go-back (iOS-style left-edge swipe) ---------- */
 /* Detail screens only show a tappable back arrow; this lets a swipe from the
-   left edge trigger the same handleBack() so navigation feels native. */
+   left edge trigger the same handleBack() so navigation feels native.
+   Uses raw touch events (not Pointer Events) so we can call preventDefault()
+   and claim the gesture before the browser's own edge-swipe-back — which, on
+   a page with no history to go back to, falls through to switching tabs. */
 
 (function initSwipeBack() {
-  const EDGE_ZONE = 28; // px from the left edge that can start a back-swipe
+  const PREVENT_ZONE = 16; // px from the true edge where we eagerly claim the touch, ahead of the browser's own edge gesture
+  const EDGE_ZONE = 28; // px from the left edge that can start a tracked back-swipe
   const TRIGGER_PX = 70; // horizontal drag distance required to trigger back
   const MAX_SLOPE = 0.6; // vertical/horizontal ratio allowed before it's treated as a vertical scroll
 
   let tracking = false;
-  let pointerId = null;
   let startX = 0;
   let startY = 0;
 
@@ -2221,35 +2224,51 @@ document.addEventListener("pointerleave", clearPressed, true);
   }
 
   document.addEventListener(
-    "pointerdown",
+    "touchstart",
     (e) => {
-      if (e.pointerType === "mouse") return;
-      if (e.clientX > EDGE_ZONE) return;
-      if (!canGoBack()) return;
+      if (e.touches.length !== 1) return;
+      const t = e.touches[0];
+      if (t.clientX > EDGE_ZONE || !canGoBack()) {
+        tracking = false;
+        return;
+      }
       tracking = true;
-      pointerId = e.pointerId;
-      startX = e.clientX;
-      startY = e.clientY;
+      startX = t.clientX;
+      startY = t.clientY;
+      if (t.clientX <= PREVENT_ZONE && e.cancelable) e.preventDefault();
     },
-    { passive: true }
+    { passive: false }
   );
 
   document.addEventListener(
-    "pointerup",
+    "touchmove",
     (e) => {
-      if (!tracking || e.pointerId !== pointerId) return;
+      if (!tracking) return;
+      const t = e.touches[0];
+      const dx = t.clientX - startX;
+      const dy = Math.abs(t.clientY - startY);
+      if (dx > 10 && dy < dx * MAX_SLOPE && e.cancelable) e.preventDefault();
+    },
+    { passive: false }
+  );
+
+  document.addEventListener(
+    "touchend",
+    (e) => {
+      if (!tracking) return;
       tracking = false;
-      const dx = e.clientX - startX;
-      const dy = Math.abs(e.clientY - startY);
+      const t = e.changedTouches[0];
+      const dx = t.clientX - startX;
+      const dy = Math.abs(t.clientY - startY);
       if (dx > TRIGGER_PX && dy < dx * MAX_SLOPE) handleBack();
     },
     { passive: true }
   );
 
   document.addEventListener(
-    "pointercancel",
-    (e) => {
-      if (e.pointerId === pointerId) tracking = false;
+    "touchcancel",
+    () => {
+      tracking = false;
     },
     { passive: true }
   );
