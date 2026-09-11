@@ -2131,7 +2131,10 @@ function handleBack() {
   if (S.screen === "setcount") {
     goHome();
   } else if (S.screen === "flow") {
-    if (S.flowMode === "edit") {
+    if (S.phase === "reps" && !S.currentExercise.noWeight) {
+      S.phase = "weight";
+      render();
+    } else if (S.flowMode === "edit") {
       S.screen = "summary";
       render();
     } else if (S.flowIndex === 0) {
