@@ -1535,3 +1535,18 @@ label.noweight-check {
 .routine-pick.selected { background: var(--accent); border-color: var(--accent); color: #fff; }
 .add-card-actions { display: flex; gap: 8px; margin-top: 12px; }
 .add-card-actions .pill-btn { flex: 1; }
+
+/* ---------- icon buttons: round, quiet fill, colour only on the glyph ---------- */
+
+.row-edit, .row-del {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--fill);
+}
+.row-edit { color: var(--text-2); }
+.row-del { color: var(--red); }
+.row-edit:active, .row-edit.pressed,
+.row-del:active, .row-del.pressed { background: var(--fill-press); transform: scale(0.9); }
+.row-edit svg, .row-del svg, .iconbtn svg { display: block; }
+.entry-actions { gap: 6px; }

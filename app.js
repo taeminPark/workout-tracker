@@ -4,6 +4,10 @@
 
 const ICON_DUMBBELL = `<svg class="icon-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="1" y="9" width="3" height="6" rx="1"/><rect x="4.5" y="7" width="3" height="10" rx="1"/><line x1="8" y1="12" x2="16" y2="12"/><rect x="16.5" y="7" width="3" height="10" rx="1"/><rect x="20" y="9" width="3" height="6" rx="1"/></svg>`;
 
+const ICON_GEAR = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.2a1 1 0 0 1 1-.8h1.4a1 1 0 0 1 1 .8l.3 1.7a7.6 7.6 0 0 1 1.8 1l1.6-.6a1 1 0 0 1 1.2.4l.7 1.2a1 1 0 0 1-.2 1.3l-1.3 1.1a7.6 7.6 0 0 1 0 2.1l1.3 1.1a1 1 0 0 1 .2 1.3l-.7 1.2a1 1 0 0 1-1.2.4l-1.6-.6a7.6 7.6 0 0 1-1.8 1l-.3 1.7a1 1 0 0 1-1 .8h-1.4a1 1 0 0 1-1-.8l-.3-1.7a7.6 7.6 0 0 1-1.8-1l-1.6.6a1 1 0 0 1-1.2-.4l-.7-1.2a1 1 0 0 1 .2-1.3l1.3-1.1a7.6 7.6 0 0 1 0-2.1L4.9 9.4a1 1 0 0 1-.2-1.3l.7-1.2a1 1 0 0 1 1.2-.4l1.6.6a7.6 7.6 0 0 1 1.8-1z"/><circle cx="12" cy="12" r="3"/></svg>`;
+const ICON_PENCIL = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L18.5 9.5a2.1 2.1 0 0 0-4-4L4 16z"/><line x1="13.5" y1="6.5" x2="17.5" y2="10.5"/></svg>`;
+const ICON_TRASH = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9.5 7V4.5h5V7"/><path d="M6 7l1 12.5a1.5 1.5 0 0 0 1.5 1.4h7a1.5 1.5 0 0 0 1.5-1.4L18 7"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>`;
+
 /* ---------- storage helpers ---------- */
 
 const LS = {
@@ -1718,7 +1722,7 @@ function renderTopbar(title, opts) {
       ${
         opts.onBack
           ? `<button class="iconbtn" data-action="back">‹</button>`
-          : `<button class="iconbtn" data-action="settings">⚙</button>`
+          : `<button class="iconbtn" data-action="settings" aria-label="설정">${ICON_GEAR}</button>`
       }
       <h1>${esc(title)}</h1>
       ${opts.right || `<div style="width:40px"></div>`}
@@ -1788,8 +1792,8 @@ function renderHome() {
               <div class="entry-top">
                 <span class="entry-name">${esc(e.exerciseName)}${prBadge(prs, todayKey(), i)}</span>
                 <span class="entry-actions">
-                  <button class="row-edit" data-action="edit-log-entry" data-date="${todayKey()}" data-idx="${i}">✎</button>
-                  <button class="row-del" data-action="del-log-entry" data-date="${todayKey()}" data-idx="${i}">✕</button>
+                  <button class="row-edit" data-action="edit-log-entry" data-date="${todayKey()}" data-idx="${i}" aria-label="수정">${ICON_PENCIL}</button>
+                  <button class="row-del" data-action="del-log-entry" data-date="${todayKey()}" data-idx="${i}" aria-label="삭제">${ICON_TRASH}</button>
                 </span>
               </div>
               <div class="entry-sets">
@@ -1850,7 +1854,7 @@ function renderHome() {
   app.innerHTML = h`
     <header class="home-header">
       <h1>${esc(appTitle)}</h1>
-      <button class="iconbtn" data-action="settings" aria-label="설정">⚙</button>
+      <button class="iconbtn" data-action="settings" aria-label="설정">${ICON_GEAR}</button>
     </header>
     ${weeklyGoalHtml(logs, settings)}
     ${restBannerHtml()}
@@ -2606,7 +2610,7 @@ function renderCalendar() {
               <div class="day-set-card">
                 <div class="day-set-head">
                   <span class="day-set-name">${esc(e.exerciseName)}${prBadge(prs, S.calSelected, i)}</span>
-                  <button class="row-del" data-action="del-log-entry" data-date="${S.calSelected}" data-idx="${i}">✕</button>
+                  <button class="row-del" data-action="del-log-entry" data-date="${S.calSelected}" data-idx="${i}" aria-label="삭제">${ICON_TRASH}</button>
                 </div>
                 <div class="day-set-chips">
                   ${e.sets
