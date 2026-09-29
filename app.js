@@ -12,6 +12,7 @@ const LS = {
   logs: "wt_logs",
   settings: "wt_settings",
   aiCoach: "wt_ai_coach",
+  routines: "wt_routines",
 };
 
 const DEFAULT_EXERCISES = [
@@ -77,6 +78,7 @@ function getSettings() {
     lastSyncOk: null,
     geminiKey: "",
     geminiModel: "gemini-flash-lite-latest",
+    weeklyGoal: 3,
   });
 }
 function saveSettings(s) {
@@ -129,6 +131,15 @@ let S = {
   geminiModels: null, // array of model ids once fetched via "사용 가능한 모델 확인"
   geminiModelsLoading: false,
   geminiModelsError: null,
+  restEndsAt: null, // timestamp when the running rest timer ends
+  restTotal: 0,
+  restDone: false,
+  routine: null, // { id, name, ids, idx } while a routine is running
+  routineDraft: null, // { id, name, exerciseIds } on the routine editor
+  historyId: null,
+  historyFrom: "home",
+  historyPoints: null,
+  historyUnit: "kg",
 };
 
 const WEIGHT_STEP = 2.5;
@@ -181,6 +192,7 @@ function commitExercise() {
     ts: Date.now(),
   });
   saveLogs(logs);
+  announcePR(key, logs[key].length - 1);
 
   if (key === todayKey()) {
     const lastUsed = getLastUsed();
@@ -274,6 +286,10 @@ function confirmRepsStep() {
     return;
   }
   S.sets.push(value);
+  if (!S.logTargetDate && !S.editingLog) {
+    unlockAudio();
+    startRest(restSecFor(S.currentExercise));
+  }
   if (S.sets.length < S.targetSets) {
     startSet(S.sets.length, "append");
   } else {
@@ -339,7 +355,7 @@ function finishExercise() {
     S.logTargetDate = null;
     S.screen = "calendar";
     render();
-  } else {
+  } else if (!advanceRoutine()) {
     goHome();
   }
 }
@@ -887,6 +903,7 @@ async function syncToGitHub() {
       {
         logs: getLogs(),
         exercises: getExercises(),
+        routines: getRoutines(),
         appTitle: s.appTitle || "운동 기록",
         aiCoach: getAICoachCache(),
       },
@@ -956,6 +973,7 @@ async function loadFromGitHub() {
     if (parsed && typeof parsed === "object" && parsed.logs && typeof parsed.logs === "object") {
       saveLogs(parsed.logs);
       if (Array.isArray(parsed.exercises)) saveExercises(parsed.exercises);
+      if (Array.isArray(parsed.routines)) saveRoutines(parsed.routines);
       if (typeof parsed.appTitle === "string" && parsed.appTitle.trim()) {
         s.appTitle = parsed.appTitle.trim();
         document.title = s.appTitle;
@@ -977,6 +995,645 @@ async function loadFromGitHub() {
   S.restoring = false;
   render();
 }
+
+/* ---------- shared audio ---------- */
+
+let dialAudioCtx = null;
+function getAudioCtx() {
+  if (!dialAudioCtx) dialAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (dialAudioCtx.state === "suspended") dialAudioCtx.resume();
+  return dialAudioCtx;
+}
+// iOS only lets audio start inside a user gesture; call this from a tap so a later
+// timer-driven sound (rest over) is allowed to play.
+function unlockAudio() {
+  try {
+    getAudioCtx();
+  } catch (e) {}
+}
+function playTones(tones) {
+  try {
+    const ctx = getAudioCtx();
+    tones.forEach(([freq, at, dur]) => {
+      const t = ctx.currentTime + at;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(0.25, t + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + dur + 0.02);
+    });
+  } catch (e) {}
+}
+
+/* ---------- toast (lives outside #app so re-renders don't wipe it) ---------- */
+
+let toastTimer = null;
+function showToast(text, kind) {
+  let el = document.getElementById("toast");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "toast";
+    el.setAttribute("role", "status");
+    document.body.appendChild(el);
+  }
+  el.className = `toast ${kind || ""}`;
+  el.textContent = text;
+  void el.offsetWidth;
+  el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), 4000);
+}
+
+/* ---------- rest timer ---------- */
+
+const DEFAULT_REST_SEC = 90;
+let restTicker = null;
+
+function restSecFor(ex) {
+  return ex && Number(ex.restSec) > 0 ? Number(ex.restSec) : DEFAULT_REST_SEC;
+}
+
+function startRest(sec) {
+  S.restTotal = sec;
+  S.restEndsAt = Date.now() + sec * 1000;
+  S.restDone = false;
+  ensureRestTicker();
+}
+
+function stopRest() {
+  S.restEndsAt = null;
+  S.restDone = false;
+  clearInterval(restTicker);
+  restTicker = null;
+  const el = document.getElementById("rest-banner");
+  if (el) el.remove();
+}
+
+function adjustRest(deltaSec) {
+  if (!S.restEndsAt) return;
+  const base = Math.max(Date.now(), S.restEndsAt);
+  S.restEndsAt = Math.max(Date.now(), base + deltaSec * 1000);
+  S.restTotal = Math.max(1, S.restTotal + deltaSec);
+  S.restDone = false;
+  ensureRestTicker();
+  updateRestBanner();
+}
+
+function ensureRestTicker() {
+  if (!restTicker) restTicker = setInterval(tickRest, 250);
+}
+
+function tickRest() {
+  if (!S.restEndsAt) {
+    clearInterval(restTicker);
+    restTicker = null;
+    return;
+  }
+  if (!S.restDone && S.restEndsAt - Date.now() <= 0) {
+    S.restDone = true;
+    playTones([
+      [880, 0, 0.18],
+      [880, 0.3, 0.18],
+      [1320, 0.6, 0.4],
+    ]);
+    clearInterval(restTicker);
+    restTicker = null;
+  }
+  updateRestBanner();
+}
+
+function fmtClock(sec) {
+  const s = Math.max(0, Math.ceil(sec));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+function restBannerHtml() {
+  if (!S.restEndsAt) return "";
+  const left = (S.restEndsAt - Date.now()) / 1000;
+  const frac = S.restDone ? 0 : Math.max(0, Math.min(1, left / S.restTotal));
+  return h`
+    <div class="rest-banner${S.restDone ? " done" : ""}" id="rest-banner">
+      <svg class="rest-ring" viewBox="0 0 40 40" aria-hidden="true">
+        <circle cx="20" cy="20" r="17" class="rest-ring-bg"/>
+        <circle cx="20" cy="20" r="17" class="rest-ring-fg" id="rest-ring-fg" pathLength="100" stroke-dasharray="100" stroke-dashoffset="${100 - frac * 100}"/>
+      </svg>
+      <div class="rest-text">
+        <span class="rest-label" id="rest-label">${S.restDone ? "휴식 끝, 다음 세트 시작!" : "휴식"}</span>
+        <span class="rest-time" id="rest-time">${S.restDone ? "0:00" : fmtClock(left)}</span>
+      </div>
+      <button class="rest-btn" data-action="rest-adjust" data-d="-15" aria-label="15초 줄이기">−15</button>
+      <button class="rest-btn" data-action="rest-adjust" data-d="15" aria-label="15초 늘리기">+15</button>
+      <button class="rest-btn wide" data-action="rest-skip" id="rest-skip">${S.restDone ? "닫기" : "건너뛰기"}</button>
+    </div>
+  `;
+}
+
+// updates text/ring in place (never replaces the buttons, so a tap mid-countdown isn't lost)
+function updateRestBanner() {
+  const el = document.getElementById("rest-banner");
+  if (!el) return;
+  const left = (S.restEndsAt - Date.now()) / 1000;
+  el.classList.toggle("done", S.restDone);
+  document.getElementById("rest-label").textContent = S.restDone ? "휴식 끝, 다음 세트 시작!" : "휴식";
+  document.getElementById("rest-time").textContent = S.restDone ? "0:00" : fmtClock(left);
+  document.getElementById("rest-skip").textContent = S.restDone ? "닫기" : "건너뛰기";
+  const frac = S.restDone ? 0 : Math.max(0, Math.min(1, left / S.restTotal));
+  document.getElementById("rest-ring-fg").setAttribute("stroke-dashoffset", String(100 - frac * 100));
+}
+
+/* ---------- personal records ---------- */
+
+function entryBest(entry) {
+  if (!entry.sets || entry.sets.length === 0) return 0;
+  if (entry.noWeight) return Math.max(...entry.sets.map((s) => s.reps));
+  return Math.max(...entry.sets.map((s) => estOneRM(s.weight, s.reps)));
+}
+
+// walks all logs in date order; an entry is a PR when it beats every earlier entry of
+// the same exercise (the very first entry of an exercise has nothing to beat, so it isn't one)
+function computePRs(logs) {
+  const best = {};
+  const prs = new Map(); // "date|idx" -> { prev, now }
+  Object.keys(logs)
+    .sort()
+    .forEach((date) => {
+      (logs[date] || []).forEach((entry, idx) => {
+        const v = entryBest(entry);
+        const prev = best[entry.exerciseId];
+        if (prev !== undefined && v > prev + 1e-9) prs.set(`${date}|${idx}`, { prev, now: v });
+        if (prev === undefined || v > prev) best[entry.exerciseId] = v;
+      });
+    });
+  return prs;
+}
+
+function prBadge(prs, date, idx) {
+  return prs.has(`${date}|${idx}`) ? `<span class="pr-badge">🏆 신기록</span>` : "";
+}
+
+function announcePR(date, idx) {
+  const logs = getLogs();
+  const entry = logs[date] && logs[date][idx];
+  const pr = entry && computePRs(logs).get(`${date}|${idx}`);
+  if (!pr) return;
+  const detail = entry.noWeight
+    ? `최다 ${pr.now}회 (이전 ${pr.prev}회)`
+    : `추정 1RM ${Math.round(pr.prev)}kg → ${Math.round(pr.now)}kg`;
+  showToast(`🏆 ${entry.exerciseName} 신기록! ${detail}`, "gold");
+  playTones([
+    [660, 0, 0.14],
+    [880, 0.14, 0.14],
+    [1320, 0.28, 0.35],
+  ]);
+}
+
+/* ---------- plate calculator ---------- */
+
+const BAR_KG = 20;
+const PLATE_SIZES = [25, 20, 15, 10, 5, 2.5, 1.25];
+const PLATE_HEX = { 25: "#d8322b", 20: "#2c64d6", 15: "#f0bd2c", 10: "#2e9e57", 5: "#e9e9e4", 2.5: "#8e8e93", 1.25: "#c7c7cc" };
+const BARBELL_IDS = new Set(["bench_press", "incline_bench", "deadlift", "barbell_row", "squat", "overhead_press", "barbell_curl"]);
+
+function isBarbell(ex) {
+  if (!ex || ex.noWeight) return false;
+  return typeof ex.barbell === "boolean" ? ex.barbell : BARBELL_IDS.has(ex.id);
+}
+
+function platesPerSide(total) {
+  let side = roundTo((total - BAR_KG) / 2, 3);
+  const plates = [];
+  PLATE_SIZES.forEach((p) => {
+    while (side >= p - 1e-9) {
+      plates.push(p);
+      side = roundTo(side - p, 3);
+    }
+  });
+  return { plates, leftover: roundTo(side * 2, 2) };
+}
+
+function plateHintInner(total) {
+  if (total < BAR_KG) return `<span class="plate-text">빈 바(${BAR_KG}kg)보다 가벼워요</span>`;
+  if (total === BAR_KG) return `<span class="plate-text">빈 바만 들면 돼요</span>`;
+  const { plates, leftover } = platesPerSide(total);
+  const chips = plates
+    .map((p) => `<i class="plate-chip" style="--h:${Math.round(12 + p * 0.9)}px;background:${PLATE_HEX[p]}"></i>`)
+    .join("");
+  const text = `한쪽에 ${plates.join(" + ")}kg`;
+  const extra = leftover > 0 ? ` <span class="plate-warn">${leftover}kg는 원판으로 못 맞춰요</span>` : "";
+  return `<span class="plate-chips" aria-hidden="true">${chips}</span><span class="plate-text">${text}${extra}</span>`;
+}
+
+function plateHintHtml() {
+  if (!isBarbell(S.currentExercise)) return "";
+  return `<div class="plate-hint" id="plate-hint">${plateHintInner(S.draftWeight)}</div>`;
+}
+
+function updatePlateHint() {
+  const el = document.getElementById("plate-hint");
+  if (el) el.innerHTML = plateHintInner(S.draftWeight);
+}
+
+/* ---------- weekly goal ---------- */
+
+function weekStart(d) {
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); // back to Monday
+  return x;
+}
+
+function daysLoggedInWeek(logs, monday) {
+  const days = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    const key = dateKey(d);
+    days.push({ key, logged: !!(logs[key] && logs[key].length) });
+  }
+  return days;
+}
+
+function weeklyGoalHtml(logs, settings) {
+  const goal = Math.min(7, Math.max(1, Number(settings.weeklyGoal) || 3));
+  const monday = weekStart(new Date());
+  const days = daysLoggedInWeek(logs, monday);
+  const done = days.filter((d) => d.logged).length;
+  const today = todayKey();
+
+  // consecutive weeks that met the goal, counting this week only once it's met
+  let streak = done >= goal ? 1 : 0;
+  const w = new Date(monday);
+  for (let i = 0; i < 104; i++) {
+    w.setDate(w.getDate() - 7);
+    if (daysLoggedInWeek(logs, w).filter((d) => d.logged).length >= goal) streak++;
+    else break;
+  }
+
+  const text =
+    done >= goal ? `이번 주 목표 달성! ${done}/${goal}회` : `이번 주 ${done}회 운동, 목표까지 ${goal - done}회`;
+  const dots = days
+    .map(
+      (d, i) =>
+        `<span class="week-day${d.logged ? " on" : ""}${d.key === today ? " today" : ""}">${"월화수목금토일"[i]}</span>`
+    )
+    .join("");
+  return h`
+    <div class="week-goal${done >= goal ? " met" : ""}">
+      <div class="week-days">${dots}</div>
+      <div class="week-text">${text}${streak >= 2 ? ` <span class="week-streak">🔥 ${streak}주 연속</span>` : ""}</div>
+    </div>
+  `;
+}
+
+/* ---------- routines ---------- */
+
+function getRoutines() {
+  return loadJSON(LS.routines, []);
+}
+function saveRoutines(list) {
+  saveJSON(LS.routines, list);
+}
+
+function routineExercises(routine) {
+  const exercises = getExercises();
+  return routine.exerciseIds.map((id) => exercises.find((x) => x.id === id)).filter(Boolean);
+}
+
+function startRoutine(id) {
+  const routine = getRoutines().find((r) => r.id === id);
+  if (!routine) return;
+  const list = routineExercises(routine);
+  if (list.length === 0) return;
+  S.routine = { id, name: routine.name, ids: list.map((x) => x.id), idx: 0 };
+  pickExercise(list[0]);
+}
+
+// moves to the next exercise of the running routine; returns false when it's finished
+function advanceRoutine() {
+  if (!S.routine) return false;
+  S.routine.idx++;
+  const exercises = getExercises();
+  while (S.routine.idx < S.routine.ids.length) {
+    const ex = exercises.find((x) => x.id === S.routine.ids[S.routine.idx]);
+    if (ex) {
+      navDirection = "forward";
+      pickExercise(ex);
+      return true;
+    }
+    S.routine.idx++;
+  }
+  const name = S.routine.name;
+  S.routine = null;
+  showToast(`👏 ${name} 루틴 완료!`, "");
+  return false;
+}
+
+function routineBannerHtml() {
+  if (!S.routine) return "";
+  const n = S.routine.ids.length;
+  return h`
+    <div class="routine-banner">
+      <span><b>${esc(S.routine.name)}</b> ${S.routine.idx + 1}/${n}번째 종목</span>
+      <button class="rest-btn wide" data-action="routine-skip">${S.routine.idx + 1 < n ? "이 종목 건너뛰기" : "루틴 끝내기"}</button>
+    </div>
+  `;
+}
+
+function openRoutineEditor(id) {
+  const existing = id ? getRoutines().find((r) => r.id === id) : null;
+  S.routineDraft = existing
+    ? { id: existing.id, name: existing.name, exerciseIds: [...existing.exerciseIds] }
+    : { id: null, name: "", exerciseIds: [] };
+  S.screen = "routine";
+  render();
+}
+
+function saveRoutineDraft() {
+  const d = S.routineDraft;
+  if (!d || !d.name.trim() || d.exerciseIds.length === 0) return;
+  const list = getRoutines();
+  if (d.id) {
+    const r = list.find((x) => x.id === d.id);
+    if (r) {
+      r.name = d.name.trim();
+      r.exerciseIds = d.exerciseIds;
+    }
+  } else {
+    list.push({ id: "routine_" + Date.now(), name: d.name.trim(), exerciseIds: d.exerciseIds });
+  }
+  saveRoutines(list);
+  syncToGitHub();
+  S.routineDraft = null;
+  navDirection = "back";
+  S.screen = "home";
+  render();
+}
+
+function routinesSectionHtml() {
+  const routines = getRoutines();
+  const chips = routines
+    .map(
+      (r) =>
+        `<button class="routine-chip" data-action="start-routine" data-id="${esc(r.id)}"><span class="routine-name">${esc(
+          r.name
+        )}</span><span class="routine-count">${r.exerciseIds.length}종목</span></button>`
+    )
+    .join("");
+  return h`
+    <div class="category-label">루틴</div>
+    <div class="routine-row">
+      ${chips}
+      <button class="routine-chip add" data-action="new-routine"><span class="routine-name">+ 루틴 만들기</span><span class="routine-count">순서대로 진행</span></button>
+    </div>
+  `;
+}
+
+function renderRoutineEditor() {
+  const d = S.routineDraft;
+  const exercises = getExercises();
+  const cats = [...new Set(exercises.map((e) => e.cat))];
+  const order = d.exerciseIds
+    .map((id, i) => {
+      const ex = exercises.find((x) => x.id === id);
+      return h`
+        <div class="routine-step">
+          <span class="routine-step-n">${i + 1}</span>
+          <span class="routine-step-name">${esc(ex ? ex.name : "삭제된 종목")}</span>
+          <button class="row-edit" data-action="routine-up" data-i="${i}" aria-label="위로" ${i === 0 ? "disabled" : ""}>↑</button>
+          <button class="row-del" data-action="routine-remove" data-i="${i}" aria-label="빼기">✕</button>
+        </div>
+      `;
+    })
+    .join("");
+  let picker = "";
+  cats.forEach((cat) => {
+    picker += `<div class="routine-pick-cat">${esc(cat)}</div><div class="routine-pick-row">`;
+    exercises
+      .filter((e) => e.cat === cat)
+      .forEach((e) => {
+        picker += `<button class="routine-pick" data-action="routine-add" data-id="${esc(e.id)}">${esc(e.name)}</button>`;
+      });
+    picker += `</div>`;
+  });
+  const canSave = d.name.trim() && d.exerciseIds.length > 0;
+  app.innerHTML = h`
+    ${renderTopbar(d.id ? "루틴 편집" : "루틴 만들기", { onBack: true })}
+    <div class="form-row">
+      <label>루틴 이름</label>
+      <input id="routine-name" type="text" placeholder="예: 가슴 데이" value="${esc(d.name)}" />
+    </div>
+    <div class="category-label" style="margin-top:6px">진행 순서</div>
+    ${order ? `<div class="routine-steps">${order}</div>` : `<div class="empty-msg">아래에서 종목을 탭하면 순서대로 추가돼요.</div>`}
+    <div class="category-label">종목 추가</div>
+    ${picker}
+    <div class="footer-actions">
+      ${d.id ? `<button class="big-btn ghost danger" data-action="routine-delete">루틴 삭제</button>` : ""}
+      <button class="confirm-btn" data-action="routine-save" ${canSave ? "" : "disabled"}>저장</button>
+    </div>
+  `;
+}
+
+/* ---------- exercise history ---------- */
+
+function openHistory(id) {
+  S.historyId = id;
+  S.historyFrom = S.screen;
+  S.screen = "history";
+  render();
+}
+
+function historySessions(id) {
+  const logs = getLogs();
+  const prs = computePRs(logs);
+  const sessions = [];
+  Object.keys(logs)
+    .sort()
+    .forEach((date) => {
+      (logs[date] || []).forEach((entry, idx) => {
+        if (entry.exerciseId !== id || !entry.sets.length) return;
+        const top = entry.sets.reduce((a, s) => (s.weight > a.weight || (s.weight === a.weight && s.reps > a.reps) ? s : a));
+        sessions.push({ date, entry, best: entryBest(entry), top, pr: prs.has(`${date}|${idx}`) });
+      });
+    });
+  return sessions;
+}
+
+function fmtDate(key) {
+  const [, m, d] = key.split("-").map(Number);
+  return `${m}. ${d}`;
+}
+
+function historyChartSvg(points, unit) {
+  const W = 340, H = 190, L = 34, R = 16, T = 26, B = 26;
+  const t0 = new Date(points[0].date).getTime();
+  const t1 = new Date(points[points.length - 1].date).getTime();
+  const vals = points.map((p) => p.v);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  const pad = Math.max(1, (hi - lo) * 0.15);
+  lo = Math.max(0, lo - pad);
+  hi = hi + pad;
+  const x = (p) => (t1 === t0 ? (L + W - R) / 2 : L + ((new Date(p.date).getTime() - t0) / (t1 - t0)) * (W - L - R));
+  const y = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+  const grid = [lo, (lo + hi) / 2, hi]
+    .map(
+      (g) =>
+        `<line x1="${L}" x2="${W - R}" y1="${y(g)}" y2="${y(g)}" class="hist-grid"/><text x="${L - 6}" y="${y(g) + 4}" class="hist-axis" text-anchor="end">${Math.round(g)}</text>`
+    )
+    .join("");
+  const path = points.map((p, i) => `${i ? "L" : "M"}${x(p).toFixed(1)},${y(p.v).toFixed(1)}`).join(" ");
+  const last = points[points.length - 1];
+  const marks = points
+    .map(
+      (p, i) => `
+      <g class="hist-pt" data-action="hist-point" data-i="${i}">
+        <circle cx="${x(p)}" cy="${y(p.v)}" r="16" class="hist-hit"/>
+        <circle cx="${x(p)}" cy="${y(p.v)}" r="4.5" class="hist-dot${p.pr ? " pr" : ""}"/>
+      </g>`
+    )
+    .join("");
+  return h`
+    <svg class="hist-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="날짜별 기록 변화 그래프">
+      ${grid}
+      <text x="${L}" y="${H - 6}" class="hist-axis">${fmtDate(points[0].date)}</text>
+      <text x="${W - R}" y="${H - 6}" class="hist-axis" text-anchor="end">${fmtDate(last.date)}</text>
+      <path d="${path}" class="hist-line"/>
+      ${marks}
+      <text x="${Math.min(x(last), W - R)}" y="${y(last.v) - 12}" class="hist-last" text-anchor="end">${Math.round(last.v)}${unit}</text>
+    </svg>
+  `;
+}
+
+function renderHistory() {
+  const ex = getExercises().find((x) => x.id === S.historyId) || { id: S.historyId, name: "종목" };
+  const sessions = historySessions(S.historyId);
+  const noWeight = sessions.length ? !!sessions[sessions.length - 1].entry.noWeight : !!ex.noWeight;
+  const unit = noWeight ? "회" : "kg";
+  const metric = noWeight ? "최다 횟수" : "추정 1RM";
+  S.historyUnit = unit;
+
+  let body;
+  if (sessions.length === 0) {
+    body = `<div class="empty-msg">아직 기록이 없어요. 이 종목을 한 번 기록하면 여기에 쌓여요.</div>`;
+  } else {
+    const bestSession = sessions.reduce((a, s) => (s.best > a.best ? s : a));
+    const heaviest = sessions.reduce((a, s) => (s.top.weight > a.top.weight ? s : a));
+    const points = sessions.map((s) => ({ date: s.date, v: s.best, pr: s.pr }));
+    // one point per day: keep the day's best
+    const byDay = [];
+    points.forEach((p) => {
+      const prev = byDay[byDay.length - 1];
+      if (prev && prev.date === p.date) {
+        if (p.v > prev.v) prev.v = p.v;
+        prev.pr = prev.pr || p.pr;
+      } else byDay.push({ ...p });
+    });
+    S.historyPoints = byDay;
+    const stats = noWeight
+      ? [
+          [`${bestSession.best}회`, "최다 횟수"],
+          [`${sessions.length}번`, "운동한 횟수"],
+        ]
+      : [
+          [`${Math.round(bestSession.best)}kg`, "최고 추정 1RM"],
+          [`${heaviest.top.weight}kg × ${heaviest.top.reps}`, "가장 무거운 세트"],
+          [`${sessions.length}번`, "운동한 횟수"],
+        ];
+    const chart =
+      byDay.length >= 2
+        ? h`
+          <div class="hist-card">
+            <div class="hist-head">
+              <span class="hist-title">${metric} 변화</span>
+              <span class="hist-readout" id="hist-readout">점을 탭하면 값이 보여요</span>
+            </div>
+            ${historyChartSvg(byDay, unit)}
+          </div>`
+        : `<div class="empty-msg">두 번 이상 기록하면 변화 그래프가 그려져요.</div>`;
+    const recent = sessions
+      .slice(-10)
+      .reverse()
+      .map(
+        (s) => h`
+        <div class="day-set-card">
+          <div class="day-set-head">
+            <span class="day-set-name">${fmtDate(s.date)}${s.pr ? ` <span class="pr-badge">🏆 신기록</span>` : ""}</span>
+            <span class="hist-best">${noWeight ? `${s.best}회` : `1RM ${Math.round(s.best)}kg`}</span>
+          </div>
+          <div class="day-set-chips">
+            ${s.entry.sets.map((st) => `<span class="day-set-chip">${esc(setChipLabel(s.entry, st))}</span>`).join("")}
+          </div>
+        </div>`
+      )
+      .join("");
+    body = h`
+      <div class="hist-stats">${stats.map(([v, l]) => `<div class="hist-stat"><b>${v}</b><span>${l}</span></div>`).join("")}</div>
+      ${chart}
+      <div class="category-label">최근 기록</div>
+      <div class="set-list">${recent}</div>
+    `;
+  }
+  app.innerHTML = h`
+    ${renderTopbar(ex.name, { onBack: true })}
+    ${body}
+  `;
+}
+
+function showHistoryPoint(i) {
+  const p = S.historyPoints && S.historyPoints[i];
+  const out = document.getElementById("hist-readout");
+  if (!p || !out) return;
+  out.textContent = `${fmtDate(p.date)}  ${Math.round(p.v)}${S.historyUnit}${p.pr ? " 🏆" : ""}`;
+  document.querySelectorAll(".hist-pt").forEach((g) => g.classList.toggle("active", g.dataset.i === String(i)));
+}
+
+/* ---------- long press (exercise → history, routine → edit) ---------- */
+
+let longPressTimer = null;
+let longPressFired = false;
+let longPressStart = null;
+document.addEventListener(
+  "pointerdown",
+  (e) => {
+    const el = e.target.closest(".ex-btn, .routine-chip[data-id]");
+    longPressFired = false;
+    clearTimeout(longPressTimer);
+    if (!el) return;
+    longPressStart = [e.clientX, e.clientY];
+    longPressTimer = setTimeout(() => {
+      longPressFired = true;
+      clearPressed();
+      if (navigator.vibrate) navigator.vibrate(10);
+      if (el.classList.contains("ex-btn")) openHistory(el.dataset.id);
+      else openRoutineEditor(el.dataset.id);
+    }, 550);
+  },
+  { passive: true }
+);
+document.addEventListener(
+  "pointermove",
+  (e) => {
+    if (!longPressStart) return;
+    if (Math.hypot(e.clientX - longPressStart[0], e.clientY - longPressStart[1]) > 10) {
+      clearTimeout(longPressTimer);
+      longPressStart = null;
+    }
+  },
+  { passive: true }
+);
+["pointerup", "pointercancel"].forEach((t) =>
+  document.addEventListener(
+    t,
+    () => {
+      clearTimeout(longPressTimer);
+      longPressStart = null;
+    },
+    { passive: true }
+  )
+);
 
 /* ---------- rendering ---------- */
 
@@ -1037,6 +1694,8 @@ function renderScreen() {
   if (S.screen === "aicoaching") return renderAICoaching();
   if (S.screen === "voicelog") return renderVoiceLog();
   if (S.screen === "backfillpick") return renderBackfillPick();
+  if (S.screen === "routine") return renderRoutineEditor();
+  if (S.screen === "history") return renderHistory();
 }
 
 function renderTopbar(title, opts) {
@@ -1097,6 +1756,7 @@ function renderHome() {
   const logs = getLogs();
   const today = logs[todayKey()] || [];
   const settings = getSettings();
+  const prs = computePRs(logs);
 
   let todayHtml = "";
   if (today.length > 0) {
@@ -1113,7 +1773,7 @@ function renderHome() {
               (e, i) => h`
             <div class="entry">
               <div class="entry-top">
-                <span class="entry-name">${esc(e.exerciseName)}</span>
+                <span class="entry-name">${esc(e.exerciseName)}${prBadge(prs, todayKey(), i)}</span>
                 <span class="entry-actions">
                   <button class="row-edit" data-action="edit-log-entry" data-date="${todayKey()}" data-idx="${i}">✎</button>
                   <button class="row-del" data-action="del-log-entry" data-date="${todayKey()}" data-idx="${i}">✕</button>
@@ -1150,7 +1810,7 @@ function renderHome() {
     exercises
       .filter((e) => e.cat === cat)
       .forEach((e) => {
-        gridHtml += `<button class="big-btn" data-action="pick-exercise" data-id="${esc(
+        gridHtml += `<button class="big-btn ex-btn" data-action="pick-exercise" data-id="${esc(
           e.id
         )}">${esc(e.name)}</button>`;
       });
@@ -1179,9 +1839,12 @@ function renderHome() {
       <h1>${esc(appTitle)}</h1>
       <button class="iconbtn" data-action="settings" aria-label="설정">⚙</button>
     </header>
+    ${weeklyGoalHtml(logs, settings)}
+    ${restBannerHtml()}
     ${voiceCta}
     ${todayHtml}
-    <div class="grid">${gridHtml}</div>
+    <div class="grid">${routinesSectionHtml()}${gridHtml}</div>
+    <p class="home-tip">종목 버튼을 길게 누르면 성장 그래프를, 루틴을 길게 누르면 편집 화면을 볼 수 있어요.</p>
     ${coachingTeaserHtml()}
     ${syncLine}
     <div class="tabbar-spacer"></div>
@@ -1214,6 +1877,8 @@ function renderSetCount() {
   const nums = [1, 2, 3, 4, 5, 6, 7, 8];
   app.innerHTML = h`
     ${renderTopbar(S.currentExercise.name, { onBack: true })}
+    ${restBannerHtml()}
+    ${routineBannerHtml()}
     <div class="session-title">몇 세트 하시나요?</div>
     <div class="num-grid" style="margin-top:20px">
       ${nums
@@ -1262,6 +1927,7 @@ function renderFlow() {
 
   app.innerHTML = h`
     ${renderTopbar(S.currentExercise.name, { onBack: true })}
+    ${restBannerHtml()}
     <div class="session-title">세트 ${S.flowIndex + 1} / ${S.targetSets}</div>
     <div class="progress-dots">${dots}</div>
     <div class="stepper-wrap">
@@ -1269,6 +1935,7 @@ function renderFlow() {
       <div class="stepper-value"${
         isReps ? ' data-action="edit-reps"' : ""
       }><span id="draft-num">${value}</span><span class="unit">${unit}</span></div>
+      ${isReps ? "" : plateHintHtml()}
       ${controlHtml}
       <button class="confirm-btn" data-action="confirm-step">확인 ✓</button>
     </div>
@@ -1314,20 +1981,18 @@ function angleDelta(a, b) {
   return d;
 }
 
-let dialAudioCtx = null;
 function playDialTick() {
   try {
-    if (!dialAudioCtx) dialAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    if (dialAudioCtx.state === "suspended") dialAudioCtx.resume();
-    const t = dialAudioCtx.currentTime;
-    const osc = dialAudioCtx.createOscillator();
-    const gain = dialAudioCtx.createGain();
+    const ctx = getAudioCtx();
+    const t = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
     osc.type = "square";
     osc.frequency.value = 900;
     gain.gain.setValueAtTime(0.0001, t);
     gain.gain.exponentialRampToValueAtTime(0.05, t + 0.004);
     gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.03);
-    osc.connect(gain).connect(dialAudioCtx.destination);
+    osc.connect(gain).connect(ctx.destination);
     osc.start(t);
     osc.stop(t + 0.04);
   } catch (e) {}
@@ -1389,6 +2054,7 @@ function attachDialEvents() {
       S.draftWeight = roundTo(S.draftWeight + S.weightStep, 2);
       accum -= STEP_DEG;
       if (numEl) numEl.textContent = S.draftWeight;
+      updatePlateHint();
       pulse(numEl);
       pulse(notchEl);
       if (navigator.vibrate) navigator.vibrate(4);
@@ -1398,6 +2064,7 @@ function attachDialEvents() {
       S.draftWeight = Math.max(0, roundTo(S.draftWeight - S.weightStep, 2));
       accum += STEP_DEG;
       if (numEl) numEl.textContent = S.draftWeight;
+      updatePlateHint();
       pulse(numEl);
       pulse(notchEl);
       if (navigator.vibrate) navigator.vibrate(4);
@@ -1419,6 +2086,7 @@ function attachDialEvents() {
       S.draftWeight = Math.max(0, roundTo(S.draftWeight - S.weightStep, 2));
     }
     if (extraSteps !== 0 && numEl) numEl.textContent = S.draftWeight;
+    if (extraSteps !== 0) updatePlateHint();
 
     const snapped = lastCommittedAngle + extraSteps * STEP_DEG;
     const landed = snapped !== rotation;
@@ -1494,6 +2162,7 @@ function renderSummary() {
 
   app.innerHTML = h`
     ${renderTopbar(S.currentExercise.name, { onBack: true })}
+    ${restBannerHtml()}
     <div class="session-title">${
       isEditingLog ? "기록 수정 · 세트를 탭하면 수정" : "기록 완료 · 세트를 탭하면 수정"
     }</div>
@@ -1501,7 +2170,7 @@ function renderSummary() {
     <div class="footer-actions">
       <button class="big-btn ghost" data-action="add-set">+ 세트 추가</button>
       <button class="confirm-btn" data-action="finish-exercise">${
-        isEditingLog ? "수정 저장" : "저장하고 홈으로"
+        isEditingLog ? "수정 저장" : S.routine && S.routine.idx + 1 < S.routine.ids.length ? "저장하고 다음 종목" : "저장하고 홈으로"
       }</button>
     </div>
   `;
@@ -1515,7 +2184,10 @@ function renderManage() {
     <div class="manage-row">
       <div class="manage-row-top">
         <span class="manage-name">${esc(e.name)} <span style="color:var(--text-3)">· ${esc(e.cat)}</span></span>
-        <button class="del-btn" data-action="del-exercise" data-id="${esc(e.id)}">삭제</button>
+        <span class="manage-actions">
+          <button class="del-btn neutral" data-action="open-history" data-id="${esc(e.id)}">기록</button>
+          <button class="del-btn" data-action="del-exercise" data-id="${esc(e.id)}">삭제</button>
+        </span>
       </div>
       <div class="manage-row-bottom">
         <label class="noweight-check">
@@ -1531,6 +2203,19 @@ function renderManage() {
             class="weight-input" data-action="set-start-weight" data-id="${esc(e.id)}"
             value="${e.startWeight ?? 20}" />
           <span class="unit-sm">kg</span>
+        </span>
+      </div>
+      <div class="manage-row-bottom">
+        <label class="noweight-check" data-barbell-wrap="${esc(e.id)}" style="${e.noWeight ? "display:none;" : ""}">
+          <input type="checkbox" data-action="toggle-barbell" data-id="${esc(e.id)}" ${isBarbell(e) ? "checked" : ""} />
+          <span>바벨 (원판 계산)</span>
+        </label>
+        <span class="manage-weight">
+          <span class="unit-sm">휴식</span>
+          <input type="number" inputmode="numeric" step="15" min="0"
+            class="weight-input" data-action="set-rest" data-id="${esc(e.id)}"
+            value="${restSecFor(e)}" />
+          <span class="unit-sm">초</span>
         </span>
       </div>
     </div>
@@ -1573,6 +2258,10 @@ function renderSettings() {
     <div class="form-row">
       <label>앱 제목</label>
       <input id="set-title" type="text" placeholder="운동 기록" value="${esc(s.appTitle || "운동 기록")}" />
+    </div>
+    <div class="form-row">
+      <label>주간 운동 목표 (회)</label>
+      <input id="set-weekly-goal" type="number" inputmode="numeric" min="1" max="7" value="${esc(String(s.weeklyGoal || 3))}" />
     </div>
 
     <div class="category-label" style="text-transform:none">신체 정보</div>
@@ -1815,6 +2504,8 @@ function renderCalendar() {
   const firstDow = new Date(y, m, 1).getDay();
   const daysInMonth = new Date(y, m + 1, 0).getDate();
   const today = todayKey();
+  const prs = computePRs(logs);
+  const prDates = new Set([...prs.keys()].map((k) => k.split("|")[0]));
 
   let cells = "";
   for (let i = 0; i < firstDow; i++) {
@@ -1825,6 +2516,7 @@ function renderCalendar() {
     const hasLog = !!logs[key];
     let cls = "cal-cell";
     if (hasLog) cls += " has-log";
+    if (prDates.has(key)) cls += " has-pr";
     if (key === today) cls += " today";
     if (key === S.calSelected) cls += " selected";
     cells += `<div class="${cls}" data-action="cal-pick-day" data-key="${key}">${day}</div>`;
@@ -1852,7 +2544,7 @@ function renderCalendar() {
                 (e, i) => h`
               <div class="day-set-card">
                 <div class="day-set-head">
-                  <span class="day-set-name">${esc(e.exerciseName)}</span>
+                  <span class="day-set-name">${esc(e.exerciseName)}${prBadge(prs, S.calSelected, i)}</span>
                   <button class="row-del" data-action="del-log-entry" data-date="${S.calSelected}" data-idx="${i}">✕</button>
                 </div>
                 <div class="day-set-chips">
@@ -1922,8 +2614,60 @@ app.addEventListener("click", (e) => {
   const el = e.target.closest("[data-action]");
   if (!el) return;
   const action = el.dataset.action;
+  if (longPressFired && (action === "pick-exercise" || action === "start-routine")) {
+    longPressFired = false;
+    return;
+  }
 
   switch (action) {
+    case "rest-adjust":
+      adjustRest(Number(el.dataset.d));
+      break;
+    case "rest-skip":
+      stopRest();
+      break;
+    case "start-routine":
+      startRoutine(el.dataset.id);
+      break;
+    case "new-routine":
+      openRoutineEditor(null);
+      break;
+    case "routine-add":
+      S.routineDraft.exerciseIds.push(el.dataset.id);
+      render();
+      break;
+    case "routine-remove":
+      S.routineDraft.exerciseIds.splice(Number(el.dataset.i), 1);
+      render();
+      break;
+    case "routine-up": {
+      const i = Number(el.dataset.i);
+      const ids = S.routineDraft.exerciseIds;
+      if (i > 0) [ids[i - 1], ids[i]] = [ids[i], ids[i - 1]];
+      render();
+      break;
+    }
+    case "routine-save":
+      saveRoutineDraft();
+      break;
+    case "routine-delete":
+      if (!confirm("이 루틴을 삭제할까요?")) break;
+      saveRoutines(getRoutines().filter((r) => r.id !== S.routineDraft.id));
+      syncToGitHub();
+      S.routineDraft = null;
+      navDirection = "back";
+      S.screen = "home";
+      render();
+      break;
+    case "routine-skip":
+      if (!advanceRoutine()) goHome();
+      break;
+    case "open-history":
+      openHistory(el.dataset.id);
+      break;
+    case "hist-point":
+      showHistoryPoint(Number(el.dataset.i));
+      break;
     case "back":
       handleBack();
       break;
@@ -2094,6 +2838,7 @@ app.addEventListener("click", (e) => {
     case "save-settings": {
       const s = getSettings();
       s.appTitle = document.getElementById("set-title").value.trim() || "운동 기록";
+      s.weeklyGoal = Math.min(7, Math.max(1, parseInt(document.getElementById("set-weekly-goal").value, 10) || 3));
       s.heightCm = document.getElementById("set-height").value.trim();
       s.weightKg = document.getElementById("set-weight").value.trim();
       s.geminiKey = document.getElementById("set-gemini-key").value.trim();
@@ -2135,6 +2880,29 @@ app.addEventListener("change", (e) => {
     return;
   }
 
+  const barbellEl = e.target.closest('[data-action="toggle-barbell"]');
+  if (barbellEl) {
+    const list = getExercises();
+    const ex = list.find((x) => x.id === barbellEl.dataset.id);
+    if (ex) {
+      ex.barbell = barbellEl.checked;
+      saveExercises(list);
+    }
+    return;
+  }
+
+  const restEl = e.target.closest('[data-action="set-rest"]');
+  if (restEl) {
+    const list = getExercises();
+    const ex = list.find((x) => x.id === restEl.dataset.id);
+    if (ex) {
+      const val = parseInt(restEl.value, 10);
+      ex.restSec = Number.isFinite(val) && val > 0 ? val : DEFAULT_REST_SEC;
+      saveExercises(list);
+    }
+    return;
+  }
+
   const noWeightEl = e.target.closest('[data-action="toggle-noweight"]');
   if (noWeightEl) {
     const list = getExercises();
@@ -2144,6 +2912,8 @@ app.addEventListener("change", (e) => {
       saveExercises(list);
       const wrap = document.querySelector(`[data-weight-wrap="${CSS.escape(noWeightEl.dataset.id)}"]`);
       if (wrap) wrap.style.display = ex.noWeight ? "none" : "";
+      const bwrap = document.querySelector(`[data-barbell-wrap="${CSS.escape(noWeightEl.dataset.id)}"]`);
+      if (bwrap) bwrap.style.display = ex.noWeight ? "none" : "";
     }
     return;
   }
@@ -2151,6 +2921,14 @@ app.addEventListener("change", (e) => {
   if (e.target.id === "new-ex-noweight") {
     const row = document.getElementById("new-ex-weight-row");
     if (row) row.style.display = e.target.checked ? "none" : "";
+  }
+});
+
+app.addEventListener("input", (e) => {
+  if (e.target.id === "routine-name" && S.routineDraft) {
+    S.routineDraft.name = e.target.value;
+    const save = document.querySelector('[data-action="routine-save"]');
+    if (save) save.disabled = !(S.routineDraft.name.trim() && S.routineDraft.exerciseIds.length);
   }
 });
 
@@ -2162,6 +2940,10 @@ function roundTo(n, decimals) {
 function handleBack() {
   navDirection = "back";
   if (S.screen === "setcount") {
+    if (S.routine && S.routine.idx > 0) {
+      if (!confirm("루틴을 그만할까요? 지금까지 기록은 저장돼 있어요.")) return;
+    }
+    S.routine = null;
     goHome();
   } else if (S.screen === "flow") {
     if (S.phase === "reps" && !S.currentExercise.noWeight) {
@@ -2195,6 +2977,13 @@ function handleBack() {
     S.screen = "setcount";
     S.sets = [];
     render();
+  } else if (S.screen === "routine") {
+    S.routineDraft = null;
+    S.screen = "home";
+    render();
+  } else if (S.screen === "history") {
+    S.screen = S.historyFrom === "manage" ? "manage" : "home";
+    render();
   } else if (S.screen === "backfillpick") {
     S.logTargetDate = null;
     S.screen = "calendar";
@@ -2220,7 +3009,7 @@ function handleBack() {
 
 /* ---------- press feedback (iOS Safari doesn't reliably fire :active on tap) ---------- */
 
-const PRESSABLE = ".big-btn, .confirm-btn, .stepper-btn, .iconbtn, .tab-btn[data-action], .del-btn, .cal-cell, .set-row[data-action], .coach-teaser[data-action], .row-del, .row-edit, .add-log-btn, .stepper-value[data-action], .today-box-head, .voice-cta-btn, .voice-mic-btn, .model-pick-list .pill";
+const PRESSABLE = ".big-btn, .confirm-btn, .stepper-btn, .iconbtn, .tab-btn[data-action], .del-btn, .cal-cell, .set-row[data-action], .coach-teaser[data-action], .row-del, .row-edit, .add-log-btn, .stepper-value[data-action], .today-box-head, .voice-cta-btn, .rest-btn, .routine-chip, .routine-pick, .voice-mic-btn, .model-pick-list .pill";
 
 function clearPressed() {
   document.querySelectorAll(".pressed").forEach((el) => el.classList.remove("pressed"));
