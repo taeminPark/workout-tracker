@@ -79,6 +79,8 @@ function getSettings() {
     geminiKey: "",
     geminiModel: "gemini-flash-lite-latest",
     weeklyGoal: 3,
+    restDefault: 90,
+    theme: "auto",
   });
 }
 function saveSettings(s) {
@@ -134,8 +136,9 @@ let S = {
   restEndsAt: null, // timestamp when the running rest timer ends
   restTotal: 0,
   restDone: false,
-  routine: null, // { id, name, ids, idx } while a routine is running
+  routine: null, // { id, name, ids, done, current } while a routine is running
   routineDraft: null, // { id, name, exerciseIds } on the routine editor
+  routineEditMode: false, // home's 루틴 row shows edit targets instead of start buttons
   historyId: null,
   historyFrom: "home",
   historyPoints: null,
@@ -1054,8 +1057,14 @@ function showToast(text, kind) {
 const DEFAULT_REST_SEC = 90;
 let restTicker = null;
 
+function defaultRestSec() {
+  const v = Number(getSettings().restDefault);
+  return v > 0 ? v : DEFAULT_REST_SEC;
+}
+
+// an exercise's own rest time if one was set in 종목설정, otherwise the default from 설정
 function restSecFor(ex) {
-  return ex && Number(ex.restSec) > 0 ? Number(ex.restSec) : DEFAULT_REST_SEC;
+  return ex && Number(ex.restSec) > 0 ? Number(ex.restSec) : defaultRestSec();
 }
 
 function startRest(sec) {
@@ -1192,51 +1201,18 @@ function announcePR(date, idx) {
   ]);
 }
 
-/* ---------- plate calculator ---------- */
+/* ---------- theme ---------- */
 
-const BAR_KG = 20;
-const PLATE_SIZES = [25, 20, 15, 10, 5, 2.5, 1.25];
-const PLATE_HEX = { 25: "#d8322b", 20: "#2c64d6", 15: "#f0bd2c", 10: "#2e9e57", 5: "#e9e9e4", 2.5: "#8e8e93", 1.25: "#c7c7cc" };
-const BARBELL_IDS = new Set(["bench_press", "incline_bench", "deadlift", "barbell_row", "squat", "overhead_press", "barbell_curl"]);
-
-function isBarbell(ex) {
-  if (!ex || ex.noWeight) return false;
-  return typeof ex.barbell === "boolean" ? ex.barbell : BARBELL_IDS.has(ex.id);
+const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
+function applyTheme() {
+  const pref = getSettings().theme || "auto";
+  const theme = pref === "auto" ? (darkQuery.matches ? "dark" : "light") : pref;
+  document.documentElement.dataset.theme = theme;
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", theme === "light" ? "#f2f2f7" : "#000000");
 }
-
-function platesPerSide(total) {
-  let side = roundTo((total - BAR_KG) / 2, 3);
-  const plates = [];
-  PLATE_SIZES.forEach((p) => {
-    while (side >= p - 1e-9) {
-      plates.push(p);
-      side = roundTo(side - p, 3);
-    }
-  });
-  return { plates, leftover: roundTo(side * 2, 2) };
-}
-
-function plateHintInner(total) {
-  if (total < BAR_KG) return `<span class="plate-text">빈 바(${BAR_KG}kg)보다 가벼워요</span>`;
-  if (total === BAR_KG) return `<span class="plate-text">빈 바만 들면 돼요</span>`;
-  const { plates, leftover } = platesPerSide(total);
-  const chips = plates
-    .map((p) => `<i class="plate-chip" style="--h:${Math.round(12 + p * 0.9)}px;background:${PLATE_HEX[p]}"></i>`)
-    .join("");
-  const text = `한쪽에 ${plates.join(" + ")}kg`;
-  const extra = leftover > 0 ? ` <span class="plate-warn">${leftover}kg는 원판으로 못 맞춰요</span>` : "";
-  return `<span class="plate-chips" aria-hidden="true">${chips}</span><span class="plate-text">${text}${extra}</span>`;
-}
-
-function plateHintHtml() {
-  if (!isBarbell(S.currentExercise)) return "";
-  return `<div class="plate-hint" id="plate-hint">${plateHintInner(S.draftWeight)}</div>`;
-}
-
-function updatePlateHint() {
-  const el = document.getElementById("plate-hint");
-  if (el) el.innerHTML = plateHintInner(S.draftWeight);
-}
+darkQuery.addEventListener("change", applyTheme);
+applyTheme();
 
 /* ---------- weekly goal ---------- */
 
@@ -1273,8 +1249,7 @@ function weeklyGoalHtml(logs, settings) {
     else break;
   }
 
-  const text =
-    done >= goal ? `이번 주 목표 달성! ${done}/${goal}회` : `이번 주 ${done}회 운동, 목표까지 ${goal - done}회`;
+  const text = done >= goal ? `목표 달성 ${done}/${goal}회` : `이번 주 ${done}/${goal}회`;
   const dots = days
     .map(
       (d, i) =>
@@ -1284,7 +1259,7 @@ function weeklyGoalHtml(logs, settings) {
   return h`
     <div class="week-goal${done >= goal ? " met" : ""}">
       <div class="week-days">${dots}</div>
-      <div class="week-text">${text}${streak >= 2 ? ` <span class="week-streak">🔥 ${streak}주 연속</span>` : ""}</div>
+      <div class="week-text">${text}${streak >= 2 ? `<span class="week-streak">🔥 ${streak}주 연속</span>` : ""}</div>
     </div>
   `;
 }
@@ -1308,23 +1283,29 @@ function startRoutine(id) {
   if (!routine) return;
   const list = routineExercises(routine);
   if (list.length === 0) return;
-  S.routine = { id, name: routine.name, ids: list.map((x) => x.id), idx: 0 };
+  S.routine = { id, name: routine.name, ids: list.map((x) => x.id), done: [], current: list[0].id };
   pickExercise(list[0]);
 }
 
-// moves to the next exercise of the running routine; returns false when it's finished
+function routineRemaining() {
+  if (!S.routine) return [];
+  const exercises = getExercises();
+  return S.routine.ids
+    .filter((id) => id !== S.routine.current && !S.routine.done.includes(id))
+    .map((id) => exercises.find((x) => x.id === id))
+    .filter(Boolean);
+}
+
+// marks the current exercise done and moves to the next one left; returns false when the routine is over
 function advanceRoutine() {
   if (!S.routine) return false;
-  S.routine.idx++;
-  const exercises = getExercises();
-  while (S.routine.idx < S.routine.ids.length) {
-    const ex = exercises.find((x) => x.id === S.routine.ids[S.routine.idx]);
-    if (ex) {
-      navDirection = "forward";
-      pickExercise(ex);
-      return true;
-    }
-    S.routine.idx++;
+  const next = routineRemaining()[0];
+  S.routine.done.push(S.routine.current);
+  if (next) {
+    S.routine.current = next.id;
+    navDirection = "forward";
+    pickExercise(next);
+    return true;
   }
   const name = S.routine.name;
   S.routine = null;
@@ -1332,13 +1313,32 @@ function advanceRoutine() {
   return false;
 }
 
+// do another exercise of the routine first (e.g. the planned machine is taken)
+function switchRoutineExercise(id) {
+  const ex = getExercises().find((x) => x.id === id);
+  if (!S.routine || !ex) return;
+  S.routine.current = id;
+  pickExercise(ex);
+}
+
 function routineBannerHtml() {
   if (!S.routine) return "";
+  const remaining = routineRemaining();
   const n = S.routine.ids.length;
+  const others = remaining
+    .map((ex) => `<button class="routine-pick" data-action="routine-switch" data-id="${esc(ex.id)}">${esc(ex.name)}</button>`)
+    .join("");
   return h`
     <div class="routine-banner">
-      <span><b>${esc(S.routine.name)}</b> ${S.routine.idx + 1}/${n}번째 종목</span>
-      <button class="rest-btn wide" data-action="routine-skip">${S.routine.idx + 1 < n ? "이 종목 건너뛰기" : "루틴 끝내기"}</button>
+      <div class="routine-banner-top">
+        <span><b>${esc(S.routine.name)}</b> ${S.routine.done.length + 1}/${n}번째 종목</span>
+        <button class="rest-btn wide" data-action="routine-skip">${remaining.length ? "건너뛰기" : "루틴 끝내기"}</button>
+      </div>
+      ${
+        others
+          ? `<div class="routine-banner-sub">기구가 비어 있지 않다면 다른 종목을 먼저 할 수 있어요</div><div class="routine-pick-row">${others}</div>`
+          : ""
+      }
     </div>
   `;
 }
@@ -1375,19 +1375,30 @@ function saveRoutineDraft() {
 
 function routinesSectionHtml() {
   const routines = getRoutines();
+  const editing = S.routineEditMode && routines.length > 0;
   const chips = routines
-    .map(
-      (r) =>
-        `<button class="routine-chip" data-action="start-routine" data-id="${esc(r.id)}"><span class="routine-name">${esc(
-          r.name
-        )}</span><span class="routine-count">${r.exerciseIds.length}종목</span></button>`
+    .map((r) =>
+      editing
+        ? `<button class="routine-chip editing" data-action="edit-routine" data-id="${esc(r.id)}"><span class="routine-name">${esc(
+            r.name
+          )}</span><span class="routine-count">✎ 순서 바꾸기, 삭제</span></button>`
+        : `<button class="routine-chip" data-action="start-routine" data-id="${esc(r.id)}"><span class="routine-name">${esc(
+            r.name
+          )}</span><span class="routine-count">${r.exerciseIds.length}종목</span></button>`
     )
     .join("");
+  const editBtn = routines.length
+    ? `<button class="label-link" data-action="toggle-routine-edit">${editing ? "완료" : "편집"}</button>`
+    : "";
   return h`
-    <div class="category-label">루틴</div>
+    <div class="category-label">루틴${editBtn}</div>
     <div class="routine-row">
       ${chips}
-      <button class="routine-chip add" data-action="new-routine"><span class="routine-name">+ 루틴 만들기</span><span class="routine-count">순서대로 진행</span></button>
+      ${
+        editing
+          ? ""
+          : `<button class="routine-chip add" data-action="new-routine"><span class="routine-name">+ 루틴 만들기</span><span class="routine-count">순서대로 진행</span></button>`
+      }
     </div>
   `;
 }
@@ -1404,6 +1415,7 @@ function renderRoutineEditor() {
           <span class="routine-step-n">${i + 1}</span>
           <span class="routine-step-name">${esc(ex ? ex.name : "삭제된 종목")}</span>
           <button class="row-edit" data-action="routine-up" data-i="${i}" aria-label="위로" ${i === 0 ? "disabled" : ""}>↑</button>
+          <button class="row-edit" data-action="routine-down" data-i="${i}" aria-label="아래로" ${i === d.exerciseIds.length - 1 ? "disabled" : ""}>↓</button>
           <button class="row-del" data-action="routine-remove" data-i="${i}" aria-label="빼기">✕</button>
         </div>
       `;
@@ -1844,7 +1856,7 @@ function renderHome() {
     ${voiceCta}
     ${todayHtml}
     <div class="grid">${routinesSectionHtml()}${gridHtml}</div>
-    <p class="home-tip">종목 버튼을 길게 누르면 성장 그래프를, 루틴을 길게 누르면 편집 화면을 볼 수 있어요.</p>
+    <p class="home-tip">종목 버튼을 길게 누르면 성장 그래프를 볼 수 있어요.</p>
     ${coachingTeaserHtml()}
     ${syncLine}
     <div class="tabbar-spacer"></div>
@@ -1935,7 +1947,6 @@ function renderFlow() {
       <div class="stepper-value"${
         isReps ? ' data-action="edit-reps"' : ""
       }><span id="draft-num">${value}</span><span class="unit">${unit}</span></div>
-      ${isReps ? "" : plateHintHtml()}
       ${controlHtml}
       <button class="confirm-btn" data-action="confirm-step">확인 ✓</button>
     </div>
@@ -2054,7 +2065,6 @@ function attachDialEvents() {
       S.draftWeight = roundTo(S.draftWeight + S.weightStep, 2);
       accum -= STEP_DEG;
       if (numEl) numEl.textContent = S.draftWeight;
-      updatePlateHint();
       pulse(numEl);
       pulse(notchEl);
       if (navigator.vibrate) navigator.vibrate(4);
@@ -2064,7 +2074,6 @@ function attachDialEvents() {
       S.draftWeight = Math.max(0, roundTo(S.draftWeight - S.weightStep, 2));
       accum += STEP_DEG;
       if (numEl) numEl.textContent = S.draftWeight;
-      updatePlateHint();
       pulse(numEl);
       pulse(notchEl);
       if (navigator.vibrate) navigator.vibrate(4);
@@ -2086,7 +2095,6 @@ function attachDialEvents() {
       S.draftWeight = Math.max(0, roundTo(S.draftWeight - S.weightStep, 2));
     }
     if (extraSteps !== 0 && numEl) numEl.textContent = S.draftWeight;
-    if (extraSteps !== 0) updatePlateHint();
 
     const snapped = lastCommittedAngle + extraSteps * STEP_DEG;
     const landed = snapped !== rotation;
@@ -2170,7 +2178,7 @@ function renderSummary() {
     <div class="footer-actions">
       <button class="big-btn ghost" data-action="add-set">+ 세트 추가</button>
       <button class="confirm-btn" data-action="finish-exercise">${
-        isEditingLog ? "수정 저장" : S.routine && S.routine.idx + 1 < S.routine.ids.length ? "저장하고 다음 종목" : "저장하고 홈으로"
+        isEditingLog ? "수정 저장" : S.routine && routineRemaining().length ? "저장하고 다음 종목" : "저장하고 홈으로"
       }</button>
     </div>
   `;
@@ -2206,15 +2214,11 @@ function renderManage() {
         </span>
       </div>
       <div class="manage-row-bottom">
-        <label class="noweight-check" data-barbell-wrap="${esc(e.id)}" style="${e.noWeight ? "display:none;" : ""}">
-          <input type="checkbox" data-action="toggle-barbell" data-id="${esc(e.id)}" ${isBarbell(e) ? "checked" : ""} />
-          <span>바벨 (원판 계산)</span>
-        </label>
         <span class="manage-weight">
           <span class="unit-sm">휴식</span>
           <input type="number" inputmode="numeric" step="15" min="0"
             class="weight-input" data-action="set-rest" data-id="${esc(e.id)}"
-            value="${restSecFor(e)}" />
+            placeholder="${defaultRestSec()}" value="${Number(e.restSec) > 0 ? e.restSec : ""}" />
           <span class="unit-sm">초</span>
         </span>
       </div>
@@ -2225,6 +2229,7 @@ function renderManage() {
 
   app.innerHTML = h`
     ${renderTopbar("종목설정", { onBack: true })}
+    <div class="new-ex-hint" style="margin:-4px 0 14px">휴식 칸을 비워 두면 설정의 기본 휴식 시간(${defaultRestSec()}초)을 따라요.</div>
     <div class="set-list">${rows}</div>
     <div class="form-row">
       <label>새 종목 이름</label>
@@ -2262,6 +2267,21 @@ function renderSettings() {
     <div class="form-row">
       <label>주간 운동 목표 (회)</label>
       <input id="set-weekly-goal" type="number" inputmode="numeric" min="1" max="7" value="${esc(String(s.weeklyGoal || 3))}" />
+    </div>
+    <div class="form-row">
+      <label>세트 사이 기본 휴식 시간 (초)</label>
+      <input id="set-rest-default" type="number" inputmode="numeric" min="5" step="15" value="${esc(String(defaultRestSec()))}" />
+    </div>
+    <div class="form-row">
+      <label>화면 테마</label>
+      <div class="segmented">
+        ${[["auto", "자동"], ["light", "라이트"], ["dark", "다크"]]
+          .map(
+            ([v, l]) =>
+              `<button class="seg-btn${(s.theme || "auto") === v ? " active" : ""}" data-action="set-theme" data-v="${v}">${l}</button>`
+          )
+          .join("")}
+      </div>
     </div>
 
     <div class="category-label" style="text-transform:none">신체 정보</div>
@@ -2647,6 +2667,32 @@ app.addEventListener("click", (e) => {
       render();
       break;
     }
+    case "routine-down": {
+      const i = Number(el.dataset.i);
+      const ids = S.routineDraft.exerciseIds;
+      if (i < ids.length - 1) [ids[i + 1], ids[i]] = [ids[i], ids[i + 1]];
+      render();
+      break;
+    }
+    case "routine-switch":
+      switchRoutineExercise(el.dataset.id);
+      break;
+    case "toggle-routine-edit":
+      S.routineEditMode = !S.routineEditMode;
+      render();
+      break;
+    case "edit-routine":
+      S.routineEditMode = false;
+      openRoutineEditor(el.dataset.id);
+      break;
+    case "set-theme": {
+      const st = getSettings();
+      st.theme = el.dataset.v;
+      saveSettings(st);
+      applyTheme();
+      render();
+      break;
+    }
     case "routine-save":
       saveRoutineDraft();
       break;
@@ -2838,6 +2884,8 @@ app.addEventListener("click", (e) => {
     case "save-settings": {
       const s = getSettings();
       s.appTitle = document.getElementById("set-title").value.trim() || "운동 기록";
+      const restDefault = parseInt(document.getElementById("set-rest-default").value, 10);
+      s.restDefault = Number.isFinite(restDefault) && restDefault > 0 ? restDefault : DEFAULT_REST_SEC;
       s.weeklyGoal = Math.min(7, Math.max(1, parseInt(document.getElementById("set-weekly-goal").value, 10) || 3));
       s.heightCm = document.getElementById("set-height").value.trim();
       s.weightKg = document.getElementById("set-weight").value.trim();
@@ -2880,24 +2928,14 @@ app.addEventListener("change", (e) => {
     return;
   }
 
-  const barbellEl = e.target.closest('[data-action="toggle-barbell"]');
-  if (barbellEl) {
-    const list = getExercises();
-    const ex = list.find((x) => x.id === barbellEl.dataset.id);
-    if (ex) {
-      ex.barbell = barbellEl.checked;
-      saveExercises(list);
-    }
-    return;
-  }
-
   const restEl = e.target.closest('[data-action="set-rest"]');
   if (restEl) {
     const list = getExercises();
     const ex = list.find((x) => x.id === restEl.dataset.id);
     if (ex) {
       const val = parseInt(restEl.value, 10);
-      ex.restSec = Number.isFinite(val) && val > 0 ? val : DEFAULT_REST_SEC;
+      if (Number.isFinite(val) && val > 0) ex.restSec = val;
+      else delete ex.restSec; // empty → follow the default rest time from 설정
       saveExercises(list);
     }
     return;
@@ -2912,8 +2950,6 @@ app.addEventListener("change", (e) => {
       saveExercises(list);
       const wrap = document.querySelector(`[data-weight-wrap="${CSS.escape(noWeightEl.dataset.id)}"]`);
       if (wrap) wrap.style.display = ex.noWeight ? "none" : "";
-      const bwrap = document.querySelector(`[data-barbell-wrap="${CSS.escape(noWeightEl.dataset.id)}"]`);
-      if (bwrap) bwrap.style.display = ex.noWeight ? "none" : "";
     }
     return;
   }
@@ -2940,7 +2976,7 @@ function roundTo(n, decimals) {
 function handleBack() {
   navDirection = "back";
   if (S.screen === "setcount") {
-    if (S.routine && S.routine.idx > 0) {
+    if (S.routine && S.routine.done.length > 0) {
       if (!confirm("루틴을 그만할까요? 지금까지 기록은 저장돼 있어요.")) return;
     }
     S.routine = null;
@@ -3009,7 +3045,7 @@ function handleBack() {
 
 /* ---------- press feedback (iOS Safari doesn't reliably fire :active on tap) ---------- */
 
-const PRESSABLE = ".big-btn, .confirm-btn, .stepper-btn, .iconbtn, .tab-btn[data-action], .del-btn, .cal-cell, .set-row[data-action], .coach-teaser[data-action], .row-del, .row-edit, .add-log-btn, .stepper-value[data-action], .today-box-head, .voice-cta-btn, .rest-btn, .routine-chip, .routine-pick, .voice-mic-btn, .model-pick-list .pill";
+const PRESSABLE = ".big-btn, .confirm-btn, .stepper-btn, .iconbtn, .tab-btn[data-action], .del-btn, .cal-cell, .set-row[data-action], .coach-teaser[data-action], .row-del, .row-edit, .add-log-btn, .stepper-value[data-action], .today-box-head, .voice-cta-btn, .rest-btn, .routine-chip, .routine-pick, .seg-btn, .voice-mic-btn, .model-pick-list .pill";
 
 function clearPressed() {
   document.querySelectorAll(".pressed").forEach((el) => el.classList.remove("pressed"));

@@ -10,7 +10,22 @@
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="운동 기록" />
-<meta name="theme-color" content="#0f172a" />
+<meta name="theme-color" content="#000000" />
+<script>
+  // apply the saved theme before first paint (and pick a readable iOS status bar for light mode)
+  (function () {
+    try {
+      var s = JSON.parse(localStorage.getItem("wt_settings") || "{}");
+      var pref = s.theme || "auto";
+      var t = pref === "auto" ? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : pref;
+      document.documentElement.dataset.theme = t;
+      if (t === "light") {
+        document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]').setAttribute("content", "default");
+        document.querySelector('meta[name="theme-color"]').setAttribute("content", "#f2f2f7");
+      }
+    } catch (e) {}
+  })();
+</script>
 <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@1.3.9/dist/web/static/pretendard.css" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/fonts-archive/Paperlogy@d73efc3cd471a7faf198f39b1783b14da13dd7c4/Paperlogy.css" />
 <link rel="stylesheet" href="style.css" />
