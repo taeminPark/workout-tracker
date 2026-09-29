@@ -138,7 +138,9 @@ let S = {
   restDone: false,
   routine: null, // { id, name, ids, done, current } while a routine is running
   routineDraft: null, // { id, name, exerciseIds } on the routine editor
-  routineEditMode: false, // home's 루틴 row shows edit targets instead of start buttons
+  routineEditMode: false,
+  manageOpen: null, // exercise id expanded on 종목설정
+  newEx: null, // { name, cat, noWeight, startWeight } while the add form is open // home's 루틴 row shows edit targets instead of start buttons
   historyId: null,
   historyFrom: "home",
   historyPoints: null,
@@ -1062,9 +1064,8 @@ function defaultRestSec() {
   return v > 0 ? v : DEFAULT_REST_SEC;
 }
 
-// an exercise's own rest time if one was set in 종목설정, otherwise the default from 설정
-function restSecFor(ex) {
-  return ex && Number(ex.restSec) > 0 ? Number(ex.restSec) : defaultRestSec();
+function restSecFor() {
+  return defaultRestSec();
 }
 
 function startRest(sec) {
@@ -1720,7 +1721,7 @@ function renderTopbar(title, opts) {
           : `<button class="iconbtn" data-action="settings">⚙</button>`
       }
       <h1>${esc(title)}</h1>
-      <div style="width:40px"></div>
+      ${opts.right || `<div style="width:40px"></div>`}
     </div>
   `;
 }
@@ -2184,73 +2185,113 @@ function renderSummary() {
   `;
 }
 
-function renderManage() {
-  const exercises = getExercises();
-  const rows = exercises
-    .map(
-      (e) => h`
-    <div class="manage-row">
-      <div class="manage-row-top">
-        <span class="manage-name">${esc(e.name)} <span style="color:var(--text-3)">· ${esc(e.cat)}</span></span>
-        <span class="manage-actions">
-          <button class="del-btn neutral" data-action="open-history" data-id="${esc(e.id)}">기록</button>
-          <button class="del-btn" data-action="del-exercise" data-id="${esc(e.id)}">삭제</button>
-        </span>
-      </div>
-      <div class="manage-row-bottom">
-        <label class="noweight-check">
-          <input type="checkbox" data-action="toggle-noweight" data-id="${esc(e.id)}" ${
-        e.noWeight ? "checked" : ""
-      } />
-          <span>횟수운동</span>
-        </label>
-        <span class="manage-weight" data-weight-wrap="${esc(e.id)}" style="${
-        e.noWeight ? "display:none;" : ""
-      }">
-          <input type="number" inputmode="decimal" step="2.5" min="0"
-            class="weight-input" data-action="set-start-weight" data-id="${esc(e.id)}"
-            value="${e.startWeight ?? 20}" />
-          <span class="unit-sm">kg</span>
-        </span>
-      </div>
-      <div class="manage-row-bottom">
-        <span class="manage-weight">
-          <span class="unit-sm">휴식</span>
-          <input type="number" inputmode="numeric" step="15" min="0"
-            class="weight-input" data-action="set-rest" data-id="${esc(e.id)}"
-            placeholder="${defaultRestSec()}" value="${Number(e.restSec) > 0 ? e.restSec : ""}" />
-          <span class="unit-sm">초</span>
-        </span>
-      </div>
+const ICON_CHEVRON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>`;
+
+function switchHtml(action, id, on, label) {
+  return h`
+    <label class="ios-switch">
+      <input type="checkbox" data-action="${action}" ${id ? `data-id="${esc(id)}"` : ""} ${on ? "checked" : ""} aria-label="${esc(label)}" />
+      <span class="ios-switch-track"><span class="ios-switch-thumb"></span></span>
+    </label>
+  `;
+}
+
+function weightStepperHtml(action, id, value) {
+  const idAttr = id ? `data-id="${esc(id)}"` : "";
+  return h`
+    <div class="mini-stepper">
+      <button class="mini-step" data-action="${action}" ${idAttr} data-d="-2.5" aria-label="2.5kg 내리기">−</button>
+      <span class="mini-step-val"><input type="number" inputmode="decimal" step="2.5" min="0"
+        class="mini-step-input" data-action="${action === "sw-step" ? "set-start-weight" : "new-ex-weight"}" ${idAttr} value="${value}" /><span>kg</span></span>
+      <button class="mini-step" data-action="${action}" ${idAttr} data-d="2.5" aria-label="2.5kg 올리기">+</button>
     </div>
-  `
+  `;
+}
+
+function manageAddFormHtml(cats) {
+  const d = S.newEx;
+  const catChips = cats
+    .map(
+      (c) =>
+        `<button class="routine-pick${d.cat === c ? " selected" : ""}" data-action="new-ex-cat" data-cat="${esc(c)}">${esc(c)}</button>`
     )
     .join("");
+  return h`
+    <div class="ex-group add-card">
+      <div class="add-card-title">새 종목</div>
+      <input id="new-ex-name" class="plain-input" type="text" placeholder="종목 이름 (예: 스미스머신 스쿼트)" value="${esc(d.name)}" />
+      <div class="add-card-label">부위</div>
+      <div class="routine-pick-row">${catChips}</div>
+      <input id="new-ex-cat" class="plain-input small" type="text" placeholder="새 부위 직접 입력" value="${esc(cats.includes(d.cat) ? "" : d.cat)}" />
+      <div class="ex-setting">
+        <span>횟수만 기록 <small>플랭크, 복근처럼 무게 없는 운동</small></span>
+        ${switchHtml("new-ex-noweight", null, d.noWeight, "횟수만 기록")}
+      </div>
+      ${d.noWeight ? "" : h`<div class="ex-setting"><span>처음 시작 무게</span>${weightStepperHtml("new-ex-step", null, d.startWeight)}</div>`}
+      <div class="add-card-actions">
+        <button class="pill-btn" data-action="cancel-add-exercise">취소</button>
+        <button class="pill-btn primary" data-action="add-exercise" ${d.name.trim() ? "" : "disabled"}>추가</button>
+      </div>
+    </div>
+  `;
+}
 
+function renderManage() {
+  const exercises = getExercises();
+  const cats = [...new Set(exercises.map((e) => e.cat))];
+
+  const groups = cats
+    .map((cat) => {
+      const rows = exercises
+        .filter((e) => e.cat === cat)
+        .map((e) => {
+          const open = S.manageOpen === e.id;
+          const meta = e.noWeight ? "횟수 기록" : `시작 ${e.startWeight ?? 20}kg`;
+          return h`
+            <div class="ex-item${open ? " open" : ""}">
+              <button class="ex-row" data-action="manage-open" data-id="${esc(e.id)}" aria-expanded="${open}">
+                <span class="ex-row-name">${esc(e.name)}</span>
+                <span class="ex-row-meta">${meta}</span>
+                <span class="ex-row-chev">${ICON_CHEVRON}</span>
+              </button>
+              ${
+                open
+                  ? h`
+                <div class="ex-panel">
+                  <div class="ex-setting">
+                    <span>횟수만 기록</span>
+                    ${switchHtml("toggle-noweight", e.id, e.noWeight, "횟수만 기록")}
+                  </div>
+                  ${
+                    e.noWeight
+                      ? ""
+                      : h`<div class="ex-setting"><span>처음 시작 무게</span>${weightStepperHtml("sw-step", e.id, e.startWeight ?? 20)}</div>`
+                  }
+                  <div class="ex-panel-actions">
+                    <button class="pill-btn" data-action="open-history" data-id="${esc(e.id)}">성장 기록 보기</button>
+                    <button class="pill-btn danger" data-action="del-exercise" data-id="${esc(e.id)}">삭제</button>
+                  </div>
+                </div>`
+                  : ""
+              }
+            </div>
+          `;
+        })
+        .join("");
+      const count = exercises.filter((e) => e.cat === cat).length;
+      return h`
+        <div class="category-label">${esc(cat)}<span class="label-count">${count}</span></div>
+        <div class="ex-group">${rows}</div>
+      `;
+    })
+    .join("");
+
+  const addBtn = `<button class="iconbtn" data-action="toggle-add-exercise" aria-label="종목 추가">+</button>`;
   app.innerHTML = h`
-    ${renderTopbar("종목설정", { onBack: true })}
-    <div class="new-ex-hint" style="margin:-4px 0 14px">휴식 칸을 비워 두면 설정의 기본 휴식 시간(${defaultRestSec()}초)을 따라요.</div>
-    <div class="set-list">${rows}</div>
-    <div class="form-row">
-      <label>새 종목 이름</label>
-      <input id="new-ex-name" type="text" placeholder="예: 스미스머신 스쿼트" />
-    </div>
-    <div class="form-row">
-      <label>분류</label>
-      <input id="new-ex-cat" type="text" placeholder="예: 하체" value="기타" />
-    </div>
-    <div class="form-row new-ex-options">
-      <label class="noweight-check">
-        <input type="checkbox" id="new-ex-noweight" />
-        <span>횟수운동</span>
-      </label>
-      <span class="manage-weight" id="new-ex-weight-row">
-        <input id="new-ex-weight" type="number" inputmode="decimal" step="2.5" min="0" value="20" class="weight-input" />
-        <span class="unit-sm">kg</span>
-      </span>
-    </div>
-    <div class="new-ex-hint">횟수운동: 플랭크, 복근운동처럼 무게 없이 횟수만 기록하는 종목</div>
-    <button class="confirm-btn" data-action="add-exercise">추가</button>
+    ${renderTopbar("종목설정", { onBack: true, right: addBtn })}
+    ${S.newEx ? manageAddFormHtml(cats) : ""}
+    <p class="manage-intro">종목을 탭하면 시작 무게를 바꾸거나 삭제할 수 있어요. 처음 하는 종목은 시작 무게부터 채워져요.</p>
+    ${groups}
   `;
 }
 
@@ -2859,25 +2900,56 @@ app.addEventListener("click", (e) => {
       finishExercise();
       break;
     case "del-exercise": {
+      const target = getExercises().find((x) => x.id === el.dataset.id);
+      if (!target || !confirm(`${target.name} 종목을 삭제할까요? 지금까지의 기록은 그대로 남아요.`)) break;
       const list = getExercises().filter((x) => x.id !== el.dataset.id);
       saveExercises(list);
       render();
       break;
     }
+    case "toggle-add-exercise":
+      S.newEx = S.newEx ? null : { name: "", cat: getExercises()[0]?.cat || "기타", noWeight: false, startWeight: 20 };
+      render();
+      if (S.newEx) document.getElementById("new-ex-name")?.focus();
+      break;
+    case "cancel-add-exercise":
+      S.newEx = null;
+      render();
+      break;
+    case "new-ex-cat":
+      S.newEx.cat = el.dataset.cat;
+      render();
+      break;
+    case "new-ex-step":
+      S.newEx.startWeight = Math.max(0, roundTo(S.newEx.startWeight + Number(el.dataset.d), 2));
+      render();
+      break;
     case "add-exercise": {
-      const nameInput = document.getElementById("new-ex-name");
-      const catInput = document.getElementById("new-ex-cat");
-      const weightInput = document.getElementById("new-ex-weight");
-      const noWeightInput = document.getElementById("new-ex-noweight");
-      const name = nameInput.value.trim();
-      const cat = catInput.value.trim() || "기타";
-      const noWeight = !!(noWeightInput && noWeightInput.checked);
-      const startWeight = noWeight ? 0 : Number(weightInput.value) || 0;
+      const d = S.newEx;
+      const name = d && d.name.trim();
       if (!name) break;
+      const cat = (d.cat || "").trim() || "기타";
       const id = "custom_" + name.replace(/\s+/g, "_") + "_" + Date.now();
       const list = getExercises();
-      list.push({ id, name, cat, startWeight, noWeight });
+      list.push({ id, name, cat, startWeight: d.noWeight ? 0 : d.startWeight, noWeight: d.noWeight });
       saveExercises(list);
+      S.newEx = null;
+      S.manageOpen = id;
+      render();
+      showToast(`${name} 종목을 추가했어요`, "");
+      break;
+    }
+    case "manage-open":
+      S.manageOpen = S.manageOpen === el.dataset.id ? null : el.dataset.id;
+      render();
+      break;
+    case "sw-step": {
+      const list = getExercises();
+      const ex = list.find((x) => x.id === el.dataset.id);
+      if (ex) {
+        ex.startWeight = Math.max(0, roundTo((ex.startWeight ?? 20) + Number(el.dataset.d), 2));
+        saveExercises(list);
+      }
       render();
       break;
     }
@@ -2924,19 +2996,7 @@ app.addEventListener("change", (e) => {
       const val = Number(weightEl.value);
       ex.startWeight = isNaN(val) ? 0 : val;
       saveExercises(list);
-    }
-    return;
-  }
-
-  const restEl = e.target.closest('[data-action="set-rest"]');
-  if (restEl) {
-    const list = getExercises();
-    const ex = list.find((x) => x.id === restEl.dataset.id);
-    if (ex) {
-      const val = parseInt(restEl.value, 10);
-      if (Number.isFinite(val) && val > 0) ex.restSec = val;
-      else delete ex.restSec; // empty → follow the default rest time from 설정
-      saveExercises(list);
+      render();
     }
     return;
   }
@@ -2948,19 +3008,32 @@ app.addEventListener("change", (e) => {
     if (ex) {
       ex.noWeight = noWeightEl.checked;
       saveExercises(list);
-      const wrap = document.querySelector(`[data-weight-wrap="${CSS.escape(noWeightEl.dataset.id)}"]`);
-      if (wrap) wrap.style.display = ex.noWeight ? "none" : "";
+      render();
     }
     return;
   }
 
-  if (e.target.id === "new-ex-noweight") {
-    const row = document.getElementById("new-ex-weight-row");
-    if (row) row.style.display = e.target.checked ? "none" : "";
+  if (e.target.dataset.action === "new-ex-noweight" && S.newEx) {
+    S.newEx.noWeight = e.target.checked;
+    render();
+    return;
+  }
+  if (e.target.dataset.action === "new-ex-weight" && S.newEx) {
+    const v = Number(e.target.value);
+    S.newEx.startWeight = isNaN(v) ? 0 : v;
   }
 });
 
 app.addEventListener("input", (e) => {
+  if (S.newEx && e.target.id === "new-ex-name") {
+    S.newEx.name = e.target.value;
+    const add = document.querySelector('[data-action="add-exercise"]');
+    if (add) add.disabled = !S.newEx.name.trim();
+  }
+  if (S.newEx && e.target.id === "new-ex-cat") {
+    S.newEx.cat = e.target.value.trim() || getExercises()[0]?.cat || "기타";
+    document.querySelectorAll('[data-action="new-ex-cat"]').forEach((b) => b.classList.toggle("selected", b.dataset.cat === S.newEx.cat));
+  }
   if (e.target.id === "routine-name" && S.routineDraft) {
     S.routineDraft.name = e.target.value;
     const save = document.querySelector('[data-action="routine-save"]');
@@ -3031,8 +3104,12 @@ function handleBack() {
     S.voiceTranscript = "";
     S.screen = "home";
     render();
+  } else if (S.screen === "manage") {
+    S.manageOpen = null;
+    S.newEx = null;
+    S.screen = "home";
+    render();
   } else if (
-    S.screen === "manage" ||
     S.screen === "settings" ||
     S.screen === "calendar" ||
     S.screen === "coaching" ||
@@ -3045,7 +3122,7 @@ function handleBack() {
 
 /* ---------- press feedback (iOS Safari doesn't reliably fire :active on tap) ---------- */
 
-const PRESSABLE = ".big-btn, .confirm-btn, .stepper-btn, .iconbtn, .tab-btn[data-action], .del-btn, .cal-cell, .set-row[data-action], .coach-teaser[data-action], .row-del, .row-edit, .add-log-btn, .stepper-value[data-action], .today-box-head, .voice-cta-btn, .rest-btn, .routine-chip, .routine-pick, .seg-btn, .voice-mic-btn, .model-pick-list .pill";
+const PRESSABLE = ".big-btn, .confirm-btn, .stepper-btn, .iconbtn, .tab-btn[data-action], .del-btn, .cal-cell, .set-row[data-action], .coach-teaser[data-action], .row-del, .row-edit, .add-log-btn, .stepper-value[data-action], .today-box-head, .voice-cta-btn, .rest-btn, .routine-chip, .routine-pick, .seg-btn, .ex-row, .mini-step, .pill-btn, .voice-mic-btn, .model-pick-list .pill";
 
 function clearPressed() {
   document.querySelectorAll(".pressed").forEach((el) => el.classList.remove("pressed"));

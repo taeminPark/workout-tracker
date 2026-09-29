@@ -618,38 +618,6 @@ button, input, textarea, select { font-family: inherit; }
 }
 .form-row input:focus { outline: none; border-color: var(--accent); }
 
-.manage-row {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  background: var(--bg-elev);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  padding: 12px 14px;
-  margin-bottom: 8px;
-}
-.manage-row-top {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.manage-row-bottom {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.manage-row .manage-name {
-  flex: 1;
-  min-width: 0;
-  font-size: 14px;
-}
-.manage-row .manage-weight {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-}
 label.noweight-check {
   display: inline-flex;
   align-items: center;
@@ -675,7 +643,7 @@ label.noweight-check {
   accent-color: var(--accent);
   flex-shrink: 0;
 }
-.manage-row .weight-input, .new-ex-options .weight-input {
+.new-ex-options .weight-input {
   width: 56px;
   background: var(--bg-elev-press);
   border: 1px solid var(--border);
@@ -687,7 +655,7 @@ label.noweight-check {
   text-align: center;
   font-family: inherit;
 }
-.manage-row .unit-sm, .new-ex-options .unit-sm {
+.new-ex-options .unit-sm {
   font-size: 12px;
   color: var(--text-3);
   flex-shrink: 0;
@@ -700,17 +668,6 @@ label.noweight-check {
 }
 .new-ex-options .manage-weight { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
 .new-ex-hint { font-size: 12px; color: var(--text-3); margin: -8px 0 16px; }
-.manage-row .del-btn {
-  background: rgba(255, 69, 58, 0.16);
-  color: var(--red);
-  border: none;
-  border-radius: 9px;
-  padding: 8px 13px;
-  font-size: 14px;
-  font-weight: 600;
-  transition: background var(--fast), transform var(--fast);
-}
-.manage-row .del-btn:active, .manage-row .del-btn.pressed { background: rgba(255, 69, 58, 0.3); transform: scale(0.94); }
 
 .sync-status { font-size: 13px; color: var(--text-3); text-align: center; margin-top: 10px; }
 .sync-status.ok { color: var(--green); }
@@ -1305,8 +1262,6 @@ label.noweight-check {
 .hist-last { fill: var(--text); font-size: 12px; font-weight: 700; }
 .hist-best { font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; }
 
-.manage-actions { display: flex; gap: 6px; }
-.del-btn.neutral { color: var(--accent); border-color: rgba(10, 132, 255, 0.35); background: rgba(10, 132, 255, 0.1); }
 .empty-msg { color: var(--text-3); font-size: 14px; text-align: center; padding: 20px 0; line-height: 1.5; }
 
 /* ---------- routine editing & switching ---------- */
@@ -1386,7 +1341,7 @@ label.noweight-check {
 [data-theme="light"] .hist-stat,
 [data-theme="light"] .routine-step,
 [data-theme="light"] .day-set-card,
-[data-theme="light"] .manage-row {
+[data-theme="light"] .ex-group {
   border-color: transparent;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
@@ -1431,3 +1386,152 @@ label.noweight-check {
 .category-label { display: flex; align-items: center; }
 .routine-banner-sub { margin-top: 0; }
 [data-theme="light"] .seg-btn.active { background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
+
+/* ---------- 종목설정: grouped list with inline editing ---------- */
+
+.manage-intro { margin: 2px 0 4px; font-size: 13px; line-height: 1.5; color: var(--text-3); }
+.label-count { margin-left: 8px; font-family: "Pretendard", -apple-system, sans-serif; font-size: 14px; font-weight: 600; color: var(--text-3); }
+
+.ex-group {
+  margin-top: 10px;
+  border-radius: var(--r-lg);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.ex-item + .ex-item { border-top: 0.5px solid var(--border); }
+.ex-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 56px;
+  padding: 0 14px 0 16px;
+  background: none;
+  border: none;
+  color: var(--text);
+  text-align: left;
+  transition: background var(--fast);
+}
+.ex-row:active, .ex-row.pressed { background: var(--fill); }
+.ex-row-name { flex: 1; min-width: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; word-break: keep-all; }
+.ex-row-meta { font-size: 15px; color: var(--text-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ex-row-chev { display: flex; color: var(--text-3); transition: transform 0.2s ease; }
+.ex-item.open .ex-row-chev { transform: rotate(90deg); }
+.ex-item.open .ex-row-meta { color: var(--accent); }
+
+.ex-panel {
+  padding: 2px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ex-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 52px;
+  font-size: 15px;
+  color: var(--text);
+}
+.ex-setting + .ex-setting { border-top: 0.5px solid var(--border); }
+.ex-setting small { display: block; margin-top: 2px; font-size: 12px; color: var(--text-3); }
+.ex-panel-actions { display: flex; gap: 8px; margin-top: 8px; }
+.ex-panel-actions .pill-btn { flex: 1; }
+
+.pill-btn {
+  height: 44px;
+  padding: 0 16px;
+  border-radius: 12px;
+  border: none;
+  background: var(--fill);
+  color: var(--accent);
+  font-size: 15px;
+  font-weight: 600;
+  transition: transform var(--fast), background var(--fast);
+}
+.pill-btn:active, .pill-btn.pressed { transform: scale(0.97); background: var(--fill-press); }
+.pill-btn.danger { color: var(--red); }
+.pill-btn.primary { background: var(--accent); color: #fff; }
+.pill-btn:disabled { opacity: 0.4; }
+
+/* iOS-style switch */
+.ios-switch { position: relative; display: inline-flex; flex-shrink: 0; }
+.ios-switch input { position: absolute; inset: 0; opacity: 0; margin: 0; z-index: 1; }
+.ios-switch-track {
+  width: 51px;
+  height: 31px;
+  border-radius: 999px;
+  background: var(--fill-press);
+  position: relative;
+  transition: background 0.2s ease;
+}
+.ios-switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 27px;
+  height: 27px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+  transition: transform 0.2s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.ios-switch input:checked + .ios-switch-track { background: var(--green); }
+.ios-switch input:checked + .ios-switch-track .ios-switch-thumb { transform: translateX(20px); }
+.ios-switch input:focus-visible + .ios-switch-track { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* compact weight stepper */
+.mini-stepper { display: flex; align-items: center; gap: 6px; }
+.mini-step {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  border: none;
+  background: var(--fill);
+  color: var(--text);
+  font-size: 20px;
+  font-weight: 600;
+  transition: transform var(--fast), background var(--fast);
+}
+.mini-step:active, .mini-step.pressed { transform: scale(0.92); background: var(--fill-press); }
+.mini-step-val { display: flex; align-items: baseline; gap: 2px; font-size: 13px; color: var(--text-2); }
+.mini-step-input {
+  width: 56px;
+  padding: 6px 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 19px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  -moz-appearance: textfield;
+}
+.mini-step-input::-webkit-outer-spin-button,
+.mini-step-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.mini-step-input:focus { outline: none; color: var(--accent); }
+
+/* add form */
+.add-card { padding: 16px; margin: 4px 0 18px; border-color: rgba(10, 132, 255, 0.35); }
+.add-card-title { font-family: "Paperlogy", "Pretendard", -apple-system, sans-serif; font-size: 18px; font-weight: 700; margin-bottom: 12px; }
+.add-card-label { font-size: 13px; font-weight: 600; color: var(--text-2); margin: 14px 0 8px; }
+.plain-input {
+  width: 100%;
+  padding: 13px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--fill);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.plain-input.small { margin-top: 8px; padding: 10px 12px; font-size: 15px; }
+.plain-input:focus { outline: none; border-color: var(--accent); }
+.routine-pick.selected { background: var(--accent); border-color: var(--accent); color: #fff; }
+.add-card-actions { display: flex; gap: 8px; margin-top: 12px; }
+.add-card-actions .pill-btn { flex: 1; }
