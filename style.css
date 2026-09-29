@@ -39,7 +39,7 @@ html, body {
 body {
   background:
     radial-gradient(circle at 50% -10%, #1c1c1f 0%, #000000 55%) fixed;
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
+  font-family: "Pretendard", -apple-system, BlinkMacSystemFont, "SF Pro Text",
     "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
   font-optical-sizing: auto;
   overscroll-behavior-y: contain;
@@ -109,32 +109,68 @@ body {
   transform: scale(0.92);
 }
 
-.quickrow {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-  margin-bottom: 16px;
+/* ---------- fonts: same pairing as matjip-map (Pretendard body, Paperlogy headings) ---------- */
+
+button, input, textarea, select { font-family: inherit; }
+.topbar h1, .home-header h1, .category-label, .today-box h3, .coach-teaser h3,
+.cal-month-label {
+  font-family: "Paperlogy", "Pretendard", -apple-system, sans-serif;
 }
-.quickrow .pill {
-  background: var(--bg-elev);
-  border: 1px solid var(--border);
-  color: var(--text-2);
-  font-size: 12.5px;
-  font-weight: 600;
-  padding: 12px 4px;
-  border-radius: var(--r-md);
+
+/* ---------- home ---------- */
+
+.home-header {
   display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  padding: calc(env(safe-area-inset-top, 0px) + 18px) 0 14px;
+}
+.home-header h1 {
+  margin: 0;
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.tabbar-spacer { height: calc(env(safe-area-inset-bottom, 0px) + 64px); flex-shrink: 0; }
+.tabbar {
+  position: fixed;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 480px;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  padding: 6px 8px calc(env(safe-area-inset-bottom, 0px) + 4px);
+  background: rgba(22, 22, 24, 0.8);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-top: 0.5px solid rgba(255, 255, 255, 0.16);
+}
+.tab-btn {
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 4px;
-  white-space: nowrap;
-  transition: background var(--fast), transform var(--fast);
+  gap: 2px;
+  padding: 4px 2px;
+  background: none;
+  border: none;
+  color: rgba(235, 235, 245, 0.5);
+  font-size: 10px;
+  font-weight: 600;
+  transition: transform var(--fast), color var(--fast);
 }
-.quickrow .pill:active, .quickrow .pill.pressed {
-  background: var(--bg-elev-press);
-  transform: scale(0.96);
+.tab-btn .icon-svg { width: 24px; height: 24px; }
+.tab-btn.active { color: var(--accent); }
+.tab-btn[data-action]:active, .tab-btn.pressed { transform: scale(0.9); color: var(--text); }
+.tab-btn:focus-visible, .big-btn:focus-visible, .iconbtn:focus-visible, .voice-cta-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
-.quickrow .pill .icon-svg { width: 15px; height: 15px; }
 
 /* ---------- grids / buttons ---------- */
 
@@ -146,12 +182,11 @@ body {
 
 .category-label {
   grid-column: 1 / -1;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-3);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin: 16px 0 3px;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  margin: 22px 0 2px;
   padding-left: 2px;
 }
 .category-label:first-child { margin-top: 0; }
@@ -173,6 +208,7 @@ body {
   justify-content: center;
   text-align: center;
   line-height: 1.3;
+  word-break: keep-all;
   transition: background var(--fast), transform var(--fast), filter var(--fast);
 }
 .big-btn:active, .big-btn.pressed {
@@ -272,107 +308,128 @@ body {
 }
 
 /* ---------- weight dial ---------- */
+/* a machined knob: the tick ring turns under a fixed pointer, one major tick per weight step */
 
 .dial-outer {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
 }
 
 .dial {
-  width: 210px;
-  height: 210px;
+  --dial-size: 236px;
+  width: var(--dial-size);
+  height: var(--dial-size);
   border-radius: 50%;
-  background:
-    radial-gradient(circle at 32% 26%, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.02) 55%),
-    linear-gradient(160deg, rgba(255, 255, 255, 0.05), rgba(0, 0, 0, 0.3)),
-    var(--bg-elev);
-  border: 1px solid var(--border);
-  box-shadow: 0 14px 34px -16px rgba(0, 0, 0, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.07);
   position: relative;
   touch-action: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: filter var(--fast), transform var(--fast);
+  background: #111113;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.07),
+    0 0 0 9px #0a0a0b,
+    0 0 0 10px rgba(255, 255, 255, 0.05),
+    0 22px 40px -18px rgba(0, 0, 0, 0.9);
+  transition: box-shadow var(--fast);
 }
-.dial.grabbing { filter: brightness(1.15); transform: scale(1.02); }
-
-.dial-ticks {
-  position: absolute;
-  inset: 9px;
-  border-radius: 50%;
-  background: repeating-conic-gradient(
-    var(--text-3) 0deg 2deg,
-    transparent 2deg 30deg
-  );
-  -webkit-mask: radial-gradient(circle, transparent 60%, #000 61%, #000 67%, transparent 68%);
-  mask: radial-gradient(circle, transparent 60%, #000 61%, #000 67%, transparent 68%);
-  opacity: 0.8;
+.dial.grabbing {
+  box-shadow:
+    0 0 0 1px rgba(10, 132, 255, 0.55),
+    0 0 0 9px #0a0a0b,
+    0 0 0 10px rgba(10, 132, 255, 0.25),
+    0 22px 40px -18px rgba(0, 0, 0, 0.9);
 }
 
 .dial-knob {
-  width: 100%;
-  height: 100%;
+  position: absolute;
+  inset: 0;
   border-radius: 50%;
-  position: relative;
+  background:
+    radial-gradient(circle closest-side at 50% 50%, transparent 58%, rgba(255, 255, 255, 0.035) 59%, transparent 72%),
+    conic-gradient(from 200deg, #1a1a1d, #26262a, #19191c, #232327, #1a1a1d);
 }
 
+.dial-ticks {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+}
+/* 60 fine ticks (6deg apart) */
+.dial-ticks.minor {
+  background: repeating-conic-gradient(from -0.5deg, rgba(235, 235, 245, 0.22) 0deg 1deg, transparent 1deg 6deg);
+  -webkit-mask: radial-gradient(circle closest-side, transparent 83%, #000 83.5%, #000 90%, transparent 90.5%);
+  mask: radial-gradient(circle closest-side, transparent 83%, #000 83.5%, #000 90%, transparent 90.5%);
+}
+/* 12 major ticks, one per weight step (STEP_DEG = 30 in app.js) */
+.dial-ticks.major {
+  background: repeating-conic-gradient(from -1deg, rgba(235, 235, 245, 0.75) 0deg 2deg, transparent 2deg 30deg);
+  -webkit-mask: radial-gradient(circle closest-side, transparent 77%, #000 77.5%, #000 90%, transparent 90.5%);
+  mask: radial-gradient(circle closest-side, transparent 77%, #000 77.5%, #000 90%, transparent 90.5%);
+}
+
+/* the knob's own marker, kept for the step pulse in app.js but drawn as a quiet dimple */
 .dial-notch {
   position: absolute;
-  top: 14px;
+  top: 30%;
   left: 50%;
-  width: 9px;
-  height: 9px;
-  margin-left: -4.5px;
+  width: 6px;
+  height: 6px;
+  margin-left: -3px;
   border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 10px 2px rgba(10, 132, 255, 0.65), 0 0 0 4px rgba(10, 132, 255, 0.14);
+  background: rgba(235, 235, 245, 0.28);
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.6);
 }
-.dial-notch::after {
-  content: "";
+
+.dial-pointer {
   position: absolute;
-  top: 9px;
+  top: -15px;
   left: 50%;
-  width: 2px;
-  height: 22px;
-  margin-left: -1px;
-  border-radius: 2px;
-  background: linear-gradient(to bottom, var(--accent), transparent);
+  width: 0;
+  height: 0;
+  margin-left: -7px;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-top: 10px solid var(--accent);
+  filter: drop-shadow(0 0 6px rgba(10, 132, 255, 0.7));
+  pointer-events: none;
 }
 
 .dial-center {
   position: absolute;
   top: 50%;
   left: 50%;
+  width: 96px;
+  height: 96px;
   transform: translate(-50%, -50%);
+  border-radius: 50%;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
-  min-width: 68px;
-  padding: 11px 14px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid var(--border);
+  justify-content: center;
+  gap: 1px;
+  background:
+    repeating-radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.025) 0 1px, transparent 1px 3px),
+    radial-gradient(circle at 38% 30%, #3a3a3f, #1f1f22 70%);
+  box-shadow:
+    0 6px 14px -4px rgba(0, 0, 0, 0.8),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 0 0 1px rgba(0, 0, 0, 0.6);
   pointer-events: none;
 }
 .dial-center-label {
-  font-size: 9.5px;
-  font-weight: 700;
+  font-size: 11px;
+  font-weight: 600;
   color: var(--text-3);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
 }
 .dial-center-val {
-  font-size: 17px;
+  font-size: 19px;
   font-weight: 800;
   color: var(--text);
   font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
 }
 
-.dial-hint { font-size: 12px; color: var(--text-3); text-align: center; max-width: 260px; }
+.dial-hint { font-size: 13px; line-height: 1.5; color: var(--text-3); text-align: center; max-width: 260px; }
 
 @keyframes dial-pulse {
   0% { transform: scale(1); }
@@ -486,7 +543,8 @@ body {
   font-size: 14px;
   color: var(--text-2);
 }
-.today-box h3 { margin: 0; font-size: 12px; font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; }
+.today-box h3 { margin: 0; font-size: 17px; font-weight: 700; color: var(--text); }
+.today-count { margin-left: auto; font-size: 15px; color: var(--text-2); font-variant-numeric: tabular-nums; }
 .today-box-head {
   display: flex;
   align-items: center;
@@ -506,7 +564,6 @@ body {
   align-items: center;
   justify-content: center;
   color: var(--text-3);
-  font-size: 19px;
   flex-shrink: 0;
   transition: transform 0.18s ease;
 }
@@ -788,7 +845,8 @@ label.noweight-check {
   transition: transform var(--fast), filter var(--fast);
 }
 .coach-teaser[data-action]:active, .coach-teaser[data-action].pressed { transform: scale(0.98); filter: brightness(1.1); }
-.coach-teaser h3 { margin: 0 0 4px; font-size: 13px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; }
+.coach-teaser h3 { margin: 0 0 4px; font-size: 15px; font-weight: 700; color: var(--accent); }
+.grid + .coach-teaser { margin-top: 22px; }
 .coach-teaser p { margin: 0; font-size: 14px; color: var(--text-2); line-height: 1.4; }
 
 .coach-summary {
@@ -872,7 +930,8 @@ label.noweight-check {
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
-  .topbar { background: #0a0a0a; }
+  .topbar, .tabbar { background: #0a0a0a; }
+  .tabbar { backdrop-filter: none; -webkit-backdrop-filter: none; }
 }
 
 /* ---------- gemini model picker ---------- */
@@ -906,18 +965,18 @@ label.noweight-check {
   justify-content: center;
   gap: 8px;
   width: 100%;
-  background: linear-gradient(135deg, var(--accent), #5e5ce6);
-  color: #fff;
+  background: rgba(10, 132, 255, 0.16);
+  color: var(--accent);
   border: none;
-  font-size: 16px;
-  font-weight: 700;
+  font-size: 17px;
+  font-weight: 600;
   letter-spacing: -0.01em;
   padding: 15px;
   border-radius: var(--r-lg);
   margin-bottom: 14px;
-  transition: transform var(--fast), filter var(--fast);
+  transition: transform var(--fast), background var(--fast);
 }
-.voice-cta-btn:active, .voice-cta-btn.pressed { transform: scale(0.97); filter: brightness(1.1); }
+.voice-cta-btn:active, .voice-cta-btn.pressed { transform: scale(0.97); background: rgba(10, 132, 255, 0.26); }
 
 .voice-mic-wrap {
   display: flex;

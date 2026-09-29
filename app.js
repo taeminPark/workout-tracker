@@ -1086,6 +1086,11 @@ function coachingTeaserHtml() {
   `;
 }
 
+const ICON_HOME = `<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3.2 2.8 11a1 1 0 0 0 1.3 1.5l.9-.8V20a1.5 1.5 0 0 0 1.5 1.5h3.5v-6h4v6h3.5A1.5 1.5 0 0 0 19 20v-8.3l.9.8a1 1 0 0 0 1.3-1.5z"/></svg>`;
+const ICON_CALENDAR = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3.5" y="5" width="17" height="15" rx="2.5"/><line x1="3.5" y1="10" x2="20.5" y2="10"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/></svg>`;
+const ICON_SPARKLE = `<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M11 2.5c.4 4.6 2.9 7.1 7.5 7.5-4.6.4-7.1 2.9-7.5 7.5-.4-4.6-2.9-7.1-7.5-7.5 4.6-.4 7.1-2.9 7.5-7.5zM18.5 14c.2 2.3 1.2 3.3 3.5 3.5-2.3.2-3.3 1.2-3.5 3.5-.2-2.3-1.2-3.3-3.5-3.5 2.3-.2 3.3-1.2 3.5-3.5z"/></svg>`;
+const ICON_MIC = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><line x1="12" y1="17.5" x2="12" y2="21"/></svg>`;
+
 function renderHome() {
   const exercises = getExercises();
   const cats = [...new Set(exercises.map((e) => e.cat))];
@@ -1098,8 +1103,9 @@ function renderHome() {
     todayHtml = h`
       <div class="today-box${S.todayCollapsed ? " collapsed" : ""}">
         <div class="today-box-head" data-action="toggle-today">
-          <h3>오늘 기록 · ${today.length}개</h3>
-          <span class="today-chevron">⌄</span>
+          <h3>오늘</h3>
+          <span class="today-count">${today.length}개 종목, ${today.reduce((n, e) => n + e.sets.length, 0)}세트</span>
+          <span class="today-chevron"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
         </div>
         <div class="today-entries">
           ${today
@@ -1127,15 +1133,16 @@ function renderHome() {
     `;
   }
 
-  const quickrow = h`
-    <div class="quickrow">
-      <button class="pill" data-action="calendar">📅 운동일정</button>
-      <button class="pill" data-action="manage">${ICON_DUMBBELL} 종목설정</button>
-      <button class="pill" data-action="open-ai-coaching">🤖 AI 코칭</button>
-    </div>
+  const tabbar = h`
+    <nav class="tabbar">
+      <button class="tab-btn active" aria-current="page">${ICON_HOME}<span>홈</span></button>
+      <button class="tab-btn" data-action="calendar">${ICON_CALENDAR}<span>운동일정</span></button>
+      <button class="tab-btn" data-action="manage">${ICON_DUMBBELL}<span>종목설정</span></button>
+      <button class="tab-btn" data-action="open-ai-coaching">${ICON_SPARKLE}<span>AI 코칭</span></button>
+    </nav>
   `;
 
-  const voiceCta = h`<button class="voice-cta-btn" data-action="open-voice-log">🎙️ 음성기록</button>`;
+  const voiceCta = h`<button class="voice-cta-btn" data-action="open-voice-log">${ICON_MIC}음성으로 기록</button>`;
 
   let gridHtml = "";
   cats.forEach((cat) => {
@@ -1168,13 +1175,17 @@ function renderHome() {
   document.title = appTitle;
 
   app.innerHTML = h`
-    ${renderTopbar(appTitle)}
+    <header class="home-header">
+      <h1>${esc(appTitle)}</h1>
+      <button class="iconbtn" data-action="settings" aria-label="설정">⚙</button>
+    </header>
     ${voiceCta}
-    ${quickrow}
-    ${coachingTeaserHtml()}
     ${todayHtml}
     <div class="grid">${gridHtml}</div>
+    ${coachingTeaserHtml()}
     ${syncLine}
+    <div class="tabbar-spacer"></div>
+    ${tabbar}
   `;
 }
 
@@ -1234,14 +1245,18 @@ function renderFlow() {
     : h`
       <div class="dial-outer">
         <div class="dial" id="weight-dial">
-          <div class="dial-ticks"></div>
-          <div class="dial-knob" id="weight-dial-knob"><div class="dial-notch"></div></div>
+          <div class="dial-knob" id="weight-dial-knob">
+            <div class="dial-ticks minor"></div>
+            <div class="dial-ticks major"></div>
+            <div class="dial-notch"></div>
+          </div>
+          <div class="dial-pointer"></div>
           <div class="dial-center" id="weight-dial-center">
             <span class="dial-center-label">단위</span>
             <span class="dial-center-val" id="weight-dial-center-val">${S.weightStep}kg</span>
           </div>
         </div>
-        <div class="dial-hint">돌려서 조절 · ← 내리기 · 올리기 → · 가운데를 탭하면 단위 변경</div>
+        <div class="dial-hint">시계 방향으로 돌리면 무게가 올라가요.<br>가운데를 탭하면 단위가 바뀌어요.</div>
       </div>
     `;
 
@@ -2205,7 +2220,7 @@ function handleBack() {
 
 /* ---------- press feedback (iOS Safari doesn't reliably fire :active on tap) ---------- */
 
-const PRESSABLE = ".big-btn, .confirm-btn, .stepper-btn, .iconbtn, .quickrow .pill, .del-btn, .cal-cell, .set-row[data-action], .coach-teaser[data-action], .row-del, .row-edit, .add-log-btn, .stepper-value[data-action], .today-box-head, .voice-cta-btn, .voice-mic-btn, .model-pick-list .pill";
+const PRESSABLE = ".big-btn, .confirm-btn, .stepper-btn, .iconbtn, .tab-btn[data-action], .del-btn, .cal-cell, .set-row[data-action], .coach-teaser[data-action], .row-del, .row-edit, .add-log-btn, .stepper-value[data-action], .today-box-head, .voice-cta-btn, .voice-mic-btn, .model-pick-list .pill";
 
 function clearPressed() {
   document.querySelectorAll(".pressed").forEach((el) => el.classList.remove("pressed"));
