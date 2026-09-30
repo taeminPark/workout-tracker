@@ -1088,16 +1088,6 @@ function stopRest() {
   if (el) el.remove();
 }
 
-function adjustRest(deltaSec) {
-  if (!S.restEndsAt) return;
-  const base = Math.max(Date.now(), S.restEndsAt);
-  S.restEndsAt = Math.max(Date.now(), base + deltaSec * 1000);
-  S.restTotal = Math.max(1, S.restTotal + deltaSec);
-  S.restDone = false;
-  ensureRestTicker();
-  updateRestBanner();
-}
-
 function ensureRestTicker() {
   if (!restTicker) restTicker = setInterval(tickRest, 250);
 }
@@ -1140,8 +1130,6 @@ function restBannerHtml() {
         <span class="rest-label" id="rest-label">${S.restDone ? "휴식 끝, 다음 세트 시작!" : "휴식"}</span>
         <span class="rest-time" id="rest-time">${S.restDone ? "0:00" : fmtClock(left)}</span>
       </div>
-      <button class="rest-btn" data-action="rest-adjust" data-d="-15" aria-label="15초 줄이기">−15</button>
-      <button class="rest-btn" data-action="rest-adjust" data-d="15" aria-label="15초 늘리기">+15</button>
       <button class="rest-btn wide" data-action="rest-skip" id="rest-skip">${S.restDone ? "닫기" : "건너뛰기"}</button>
     </div>
   `;
@@ -2610,7 +2598,10 @@ function renderCalendar() {
               <div class="day-set-card">
                 <div class="day-set-head">
                   <span class="day-set-name">${esc(e.exerciseName)}${prBadge(prs, S.calSelected, i)}</span>
-                  <button class="row-del" data-action="del-log-entry" data-date="${S.calSelected}" data-idx="${i}" aria-label="삭제">${ICON_TRASH}</button>
+                  <span class="entry-actions">
+                    <button class="row-edit" data-action="edit-log-entry" data-date="${S.calSelected}" data-idx="${i}" aria-label="수정">${ICON_PENCIL}</button>
+                    <button class="row-del" data-action="del-log-entry" data-date="${S.calSelected}" data-idx="${i}" aria-label="삭제">${ICON_TRASH}</button>
+                  </span>
                 </div>
                 <div class="day-set-chips">
                   ${e.sets
@@ -2685,9 +2676,6 @@ app.addEventListener("click", (e) => {
   }
 
   switch (action) {
-    case "rest-adjust":
-      adjustRest(Number(el.dataset.d));
-      break;
     case "rest-skip":
       stopRest();
       break;

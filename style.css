@@ -775,6 +775,7 @@ label.noweight-check {
   margin-bottom: 11px;
 }
 .day-set-name { font-size: 16px; font-weight: 700; }
+.day-set-head .entry-actions { display: flex; align-items: center; flex-shrink: 0; }
 .day-set-chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .day-set-chip {
   display: inline-flex;
