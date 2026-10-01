@@ -71,7 +71,7 @@ function saveLogs(obj) {
 }
 function getSettings() {
   return loadJSON(LS.settings, {
-    appTitle: "운동 기록",
+    appTitle: "오름",
     heightCm: "",
     weightKg: "",
     token: "",
@@ -118,7 +118,7 @@ let S = {
   phase: "weight", // 'weight' | 'reps'
   draftWeight: 20,
   draftReps: 8,
-  weightStep: 2.5,
+  weightStep: 5,
   calYear: new Date().getFullYear(),
   calMonth: new Date().getMonth(),
   calSelected: null,
@@ -913,7 +913,7 @@ async function syncToGitHub() {
         logs: getLogs(),
         exercises: getExercises(),
         routines: getRoutines(),
-        appTitle: s.appTitle || "운동 기록",
+        appTitle: s.appTitle || "오름",
         aiCoach: getAICoachCache(),
       },
       null,
@@ -1836,7 +1836,7 @@ function renderHome() {
     }
   }
 
-  const appTitle = settings.appTitle || "운동 기록";
+  const appTitle = settings.appTitle || "오름";
   document.title = appTitle;
 
   app.innerHTML = h`
@@ -2002,7 +2002,7 @@ function playDialTick() {
   } catch (e) {}
 }
 
-const WEIGHT_STEP_OPTIONS = [1, 2.5, 5];
+const WEIGHT_STEP_OPTIONS = [1, 5, 10];
 
 function attachDialEvents() {
   const dial = document.getElementById("weight-dial");
@@ -2295,7 +2295,7 @@ function renderSettings() {
     <div class="category-label" style="margin-top:0">앱</div>
     <div class="form-row">
       <label>앱 제목</label>
-      <input id="set-title" type="text" placeholder="운동 기록" value="${esc(s.appTitle || "운동 기록")}" />
+      <input id="set-title" type="text" placeholder="오름" value="${esc(s.appTitle || "오름")}" />
     </div>
     <div class="form-row">
       <label>주간 운동 목표 (회)</label>
@@ -2947,7 +2947,7 @@ app.addEventListener("click", (e) => {
     }
     case "save-settings": {
       const s = getSettings();
-      s.appTitle = document.getElementById("set-title").value.trim() || "운동 기록";
+      s.appTitle = document.getElementById("set-title").value.trim() || "오름";
       const restDefault = parseInt(document.getElementById("set-rest-default").value, 10);
       s.restDefault = Number.isFinite(restDefault) && restDefault > 0 ? restDefault : DEFAULT_REST_SEC;
       s.weeklyGoal = Math.min(7, Math.max(1, parseInt(document.getElementById("set-weekly-goal").value, 10) || 3));
