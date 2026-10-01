@@ -1496,6 +1496,7 @@ label.noweight-check {
   font-weight: 600;
   transition: transform var(--fast), background var(--fast);
 }
+.mini-step-unit { width: auto; padding: 0 10px; font-size: 13px; color: var(--text-2); }
 .mini-step:active, .mini-step.pressed { transform: scale(0.92); background: var(--fill-press); }
 .mini-step-val { display: flex; align-items: baseline; gap: 2px; font-size: 13px; color: var(--text-2); }
 .mini-step-input {

@@ -119,6 +119,7 @@ let S = {
   draftWeight: 20,
   draftReps: 8,
   weightStep: 5,
+  startStep: 5,
   calYear: new Date().getFullYear(),
   calMonth: new Date().getMonth(),
   calSelected: null,
@@ -2192,10 +2193,11 @@ function weightStepperHtml(action, id, value) {
   const idAttr = id ? `data-id="${esc(id)}"` : "";
   return h`
     <div class="mini-stepper">
-      <button class="mini-step" data-action="${action}" ${idAttr} data-d="-2.5" aria-label="2.5kg 내리기">−</button>
-      <span class="mini-step-val"><input type="number" inputmode="decimal" step="2.5" min="0"
+      <button class="mini-step mini-step-unit" data-action="start-step-unit" aria-label="단위 바꾸기">${S.startStep}kg</button>
+      <button class="mini-step" data-action="${action}" ${idAttr} data-d="-${S.startStep}" aria-label="${S.startStep}kg 내리기">−</button>
+      <span class="mini-step-val"><input type="number" inputmode="decimal" step="any" min="0"
         class="mini-step-input" data-action="${action === "sw-step" ? "set-start-weight" : "new-ex-weight"}" ${idAttr} value="${value}" /><span>kg</span></span>
-      <button class="mini-step" data-action="${action}" ${idAttr} data-d="2.5" aria-label="2.5kg 올리기">+</button>
+      <button class="mini-step" data-action="${action}" ${idAttr} data-d="${S.startStep}" aria-label="${S.startStep}kg 올리기">+</button>
     </div>
   `;
 }
@@ -2910,6 +2912,10 @@ app.addEventListener("click", (e) => {
       break;
     case "new-ex-cat":
       S.newEx.cat = el.dataset.cat;
+      render();
+      break;
+    case "start-step-unit":
+      S.startStep = WEIGHT_STEP_OPTIONS[(WEIGHT_STEP_OPTIONS.indexOf(S.startStep) + 1) % WEIGHT_STEP_OPTIONS.length];
       render();
       break;
     case "new-ex-step":
