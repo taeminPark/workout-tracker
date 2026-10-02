@@ -1663,6 +1663,7 @@ function renderAndRestoreScroll() {
   renderScreen();
   lastScreen = S.screen;
   if (S.screen === "home") window.scrollTo(0, savedHomeScroll);
+  updateWakeLock();
 }
 
 function render() {
@@ -3208,6 +3209,43 @@ document.addEventListener("pointerleave", clearPressed, true);
     { passive: true }
   );
 })();
+
+/* ---------- keep screen awake while logging ---------- */
+
+// Stops the iPhone from auto-locking mid-workout (which forces a Face ID unlock
+// before every set). Only held on the logging screens so home/calendar still
+// sleep normally. Needs iOS 18.4+ for home-screen apps; a no-op elsewhere.
+const WAKE_SCREENS = ["setcount", "flow", "summary"];
+let wakeLock = null;
+let wakeLockPending = false;
+
+function wantWakeLock() {
+  return WAKE_SCREENS.includes(S.screen) && document.visibilityState === "visible";
+}
+
+async function updateWakeLock() {
+  if (!("wakeLock" in navigator) || wakeLockPending) return;
+  const want = wantWakeLock();
+  if (want && !wakeLock) {
+    wakeLockPending = true;
+    try {
+      const lock = await navigator.wakeLock.request("screen");
+      // the OS drops the lock when the app is backgrounded
+      lock.addEventListener("release", () => {
+        if (wakeLock === lock) wakeLock = null;
+      });
+      wakeLock = lock;
+    } catch (e) {}
+    wakeLockPending = false;
+    // the user may have left the logging screens while we were waiting
+    if (!wantWakeLock()) updateWakeLock();
+  } else if (!want && wakeLock) {
+    wakeLock.release().catch(() => {});
+    wakeLock = null;
+  }
+}
+
+document.addEventListener("visibilitychange", updateWakeLock);
 
 /* ---------- service worker ---------- */
 
