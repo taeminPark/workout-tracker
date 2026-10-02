@@ -1757,6 +1757,49 @@ const ICON_CALENDAR = `<svg width="24" height="24" viewBox="0 0 24 24" fill="non
 const ICON_SPARKLE = `<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M11 2.5c.4 4.6 2.9 7.1 7.5 7.5-4.6.4-7.1 2.9-7.5 7.5-.4-4.6-2.9-7.1-7.5-7.5 4.6-.4 7.1-2.9 7.5-7.5zM18.5 14c.2 2.3 1.2 3.3 3.5 3.5-2.3.2-3.3 1.2-3.5 3.5-.2-2.3-1.2-3.3-3.5-3.5 2.3-.2 3.3-1.2 3.5-3.5z"/></svg>`;
 const ICON_MIC = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><line x1="12" y1="17.5" x2="12" y2="21"/></svg>`;
 
+// shared by the four top-level screens so the bar stays put while switching tabs
+function tabbarHtml(active) {
+  const tabs = [
+    ["home", "back", ICON_HOME, "홈"],
+    ["calendar", "calendar", ICON_CALENDAR, "운동일정"],
+    ["manage", "manage", ICON_DUMBBELL, "종목설정"],
+    ["aicoaching", "open-ai-coaching", ICON_SPARKLE, "AI 코칭"],
+  ];
+  return h`
+    <div class="tabbar-spacer"></div>
+    <nav class="tabbar">
+      ${tabs
+        .map(([screen, action, icon, label]) =>
+          screen === active
+            ? `<button class="tab-btn active" aria-current="page">${icon}<span>${label}</span></button>`
+            : `<button class="tab-btn" data-action="${action}">${icon}<span>${label}</span></button>`
+        )
+        .join("")}
+    </nav>
+  `;
+}
+
+// most recent entry per exercise: { weight, reps, noWeight, date }
+function lastEntries(logs) {
+  const out = {};
+  Object.keys(logs)
+    .sort()
+    .forEach((date) => {
+      logs[date].forEach((entry) => {
+        const last = entry.sets[entry.sets.length - 1];
+        if (last) out[entry.exerciseId] = { ...last, noWeight: !!entry.noWeight, date };
+      });
+    });
+  return out;
+}
+
+function daysAgoLabel(date) {
+  const days = Math.round((new Date(todayKey()) - new Date(date)) / 86400000);
+  if (days <= 0) return "오늘";
+  if (days === 1) return "어제";
+  return `${days}일 전`;
+}
+
 function renderHome() {
   const exercises = getExercises();
   const cats = [...new Set(exercises.map((e) => e.cat))];
@@ -1800,26 +1843,24 @@ function renderHome() {
     `;
   }
 
-  const tabbar = h`
-    <nav class="tabbar">
-      <button class="tab-btn active" aria-current="page">${ICON_HOME}<span>홈</span></button>
-      <button class="tab-btn" data-action="calendar">${ICON_CALENDAR}<span>운동일정</span></button>
-      <button class="tab-btn" data-action="manage">${ICON_DUMBBELL}<span>종목설정</span></button>
-      <button class="tab-btn" data-action="open-ai-coaching">${ICON_SPARKLE}<span>AI 코칭</span></button>
-    </nav>
-  `;
-
   const voiceCta = h`<button class="voice-cta-btn" data-action="open-voice-log">${ICON_MIC}음성으로 기록</button>`;
 
+  const lastByEx = lastEntries(logs);
   let gridHtml = "";
   cats.forEach((cat) => {
     gridHtml += `<div class="category-label">${esc(cat)}</div>`;
     exercises
       .filter((e) => e.cat === cat)
       .forEach((e) => {
+        const last = lastByEx[e.id];
+        const lastHtml = last
+          ? `<span class="ex-ago">${daysAgoLabel(last.date)}</span><span class="ex-num">${
+              last.noWeight ? last.reps : last.weight
+            }<small>${last.noWeight ? "회" : "kg"}</small></span>`
+          : `<span class="ex-num empty">—</span>`;
         gridHtml += `<button class="big-btn ex-btn" data-action="pick-exercise" data-id="${esc(
           e.id
-        )}">${esc(e.name)}</button>`;
+        )}"><span class="ex-name">${esc(e.name)}</span>${lastHtml}</button>`;
       });
   });
 
@@ -1854,8 +1895,7 @@ function renderHome() {
     <p class="home-tip">종목 버튼을 길게 누르면 성장 그래프를 볼 수 있어요.</p>
     ${coachingTeaserHtml()}
     ${syncLine}
-    <div class="tabbar-spacer"></div>
-    ${tabbar}
+    ${tabbarHtml("home")}
   `;
 }
 
@@ -2287,6 +2327,7 @@ function renderManage() {
     ${S.newEx ? manageAddFormHtml(cats) : ""}
     <p class="manage-intro">종목을 탭하면 시작 무게를 바꾸거나 삭제할 수 있어요. 처음 하는 종목은 시작 무게부터 채워져요.</p>
     ${groups}
+    ${tabbarHtml("manage")}
   `;
 }
 
@@ -2472,6 +2513,7 @@ function renderAICoaching() {
   app.innerHTML = h`
     ${renderTopbar("AI 코칭", { onBack: true })}
     ${body}
+    ${tabbarHtml("aicoaching")}
   `;
 }
 
@@ -2635,6 +2677,7 @@ function renderCalendar() {
     <div class="cal-weekdays">${WEEKDAY_LABELS.map((d) => `<span>${d}</span>`).join("")}</div>
     <div class="cal-grid">${cells}</div>
     ${detailHtml}
+    ${tabbarHtml("calendar")}
   `;
 }
 

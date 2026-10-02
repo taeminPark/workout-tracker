@@ -40,6 +40,11 @@
   touch-action: pan-y;
 }
 
+html {
+  /* reserve the desktop scrollbar's width on every screen so short pages don't shift the centered tab bar */
+  scrollbar-gutter: stable;
+}
+
 html, body {
   margin: 0;
   height: 100%;
@@ -147,6 +152,7 @@ button, input, textarea, select { font-family: inherit; }
 
 .tabbar-spacer { height: calc(env(safe-area-inset-bottom, 0px) + 64px); flex-shrink: 0; }
 .tabbar {
+  view-transition-name: tabbar;
   position: fixed;
   left: 50%;
   bottom: 0;
@@ -1227,6 +1233,31 @@ label.noweight-check {
 .big-btn.ghost.danger { color: var(--red); border-color: rgba(255, 69, 58, 0.4); }
 
 .ex-btn { -webkit-touch-callout: none; }
+
+/* home exercise buttons: last weight set large so the starting number reads from a distance */
+.big-btn.ex-btn {
+  position: relative;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 2px;
+  min-height: 0;
+  padding: 12px;
+  text-align: left;
+}
+.ex-name { font-size: 15px; font-weight: 700; line-height: 1.25; max-width: 9em; }
+.ex-num {
+  align-self: flex-end;
+  font-family: "Barlow Condensed", "Pretendard", sans-serif;
+  font-size: 44px;
+  font-weight: 700;
+  line-height: 0.8;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.ex-num small { font-size: 16px; color: var(--text-2); margin-left: 2px; letter-spacing: 0; }
+.ex-num.empty { color: var(--text); font-size: 24px; line-height: 35px; }
+.ex-ago { position: absolute; left: 12px; bottom: 11px; font-size: 11px; font-weight: 500; color: var(--text-2); }
 .home-tip { margin: 18px 0 0; font-size: 12.5px; color: var(--text-3); text-align: center; line-height: 1.5; }
 
 /* ---------- exercise history ---------- */
