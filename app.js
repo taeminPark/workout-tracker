@@ -1265,6 +1265,20 @@ function weeklyGoalHtml(logs, settings) {
   `;
 }
 
+// "가슴, 팔, 복근 운동" — 종목설정의 부위(cat)를 기록 순서대로 중복 없이
+function partsSummaryHtml(entries) {
+  const exercises = getExercises();
+  const parts = [
+    ...new Set(
+      entries
+        .map((e) => (exercises.find((x) => x.id === e.exerciseId) || exercises.find((x) => x.name === e.exerciseName) || {}).cat)
+        .filter(Boolean)
+    ),
+  ];
+  if (!parts.length) return "";
+  return `<div class="parts-summary">${parts.map((c) => `<b>${esc(c)}</b>`).join(", ")} 운동</div>`;
+}
+
 /* ---------- 운동 끝 (finish the day) ---------- */
 
 const ICON_CHECK = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="5 12.5 10 17 19 7"/></svg>`;
@@ -2184,6 +2198,7 @@ function renderHome() {
           <span class="today-count">${today.length}개 종목, ${today.reduce((n, e) => n + e.sets.length, 0)}세트</span>
           <span class="today-chevron"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
         </div>
+        ${dayDone ? partsSummaryHtml(today) : ""}
         <div class="today-entries">
           ${today
             .map(
@@ -2993,6 +3008,14 @@ function renderCalendar() {
     cells += `<div class="${cls}" data-action="cal-pick-day" data-key="${key}" aria-label="${label}">${day}${star}</div>`;
   }
 
+  // 이번 달은 오늘까지, 지난 달은 한 달 전체를 분모로. 미래 달은 표시 안 함.
+  const monthPrefix = `${y}-${String(m + 1).padStart(2, "0")}`;
+  const monthDays = monthPrefix === today.slice(0, 7) ? Number(today.slice(8)) : monthPrefix < today.slice(0, 7) ? daysInMonth : 0;
+  const workedDays = Object.keys(logs).filter((k) => k.startsWith(monthPrefix) && logs[k].length > 0).length;
+  const summaryHtml = monthDays
+    ? `<div class="cal-summary">${monthPrefix === today.slice(0, 7) ? "오늘까지 " : ""}${monthDays}일 중 <b>${workedDays}일</b> 운동했어요</div>`
+    : "";
+
   let detailHtml = "";
   if (S.calSelected) {
     const entries = logs[S.calSelected] || [];
@@ -3009,6 +3032,7 @@ function renderCalendar() {
       detailHtml = h`
         <div class="day-detail">
           <h3>${esc(label)} ${addBtn}</h3>
+          ${partsSummaryHtml(entries)}
           <div class="set-list">
             ${entries
               .map(
@@ -3047,6 +3071,7 @@ function renderCalendar() {
       <span class="cal-month-label">${y}년 ${m + 1}월</span>
       <button class="iconbtn" data-action="cal-next">›</button>
     </div>
+    ${summaryHtml}
     <div class="cal-weekdays">${WEEKDAY_LABELS.map((d) => `<span>${d}</span>`).join("")}</div>
     <div class="cal-grid">${cells}</div>
     <div class="cal-legend"><span><i class="cal-legend-log"></i>운동한 날</span><span><span class="cal-pr">${ICON_STAR}</span>신기록</span></div>
