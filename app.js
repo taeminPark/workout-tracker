@@ -17,6 +17,7 @@ const LS = {
   settings: "wt_settings",
   aiCoach: "wt_ai_coach",
   routines: "wt_routines",
+  done: "wt_done", // { "YYYY-MM-DD": timestamp } days marked with 운동 끝
 };
 
 const DEFAULT_EXERCISES = [
@@ -148,6 +149,9 @@ let S = {
   newEx: null, // { name, cat, noWeight, startWeight } while the add form is open // home's 루틴 row shows edit targets instead of start buttons
   historyId: null,
   historyFrom: "home",
+  historyRange: null, // "1m" | "3m" | "all" on the 성장 detail chart
+  historyXs: null,
+  historyYs: null,
   historyPoints: null,
   historyUnit: "kg",
 };
@@ -205,6 +209,7 @@ function commitExercise() {
   announcePR(key, logs[key].length - 1);
 
   if (key === todayKey()) {
+    setDayDone(key, false); // logging after 운동 끝 means the workout continued
     const lastUsed = getLastUsed();
     const last = S.sets[S.sets.length - 1];
     lastUsed[S.currentExercise.id] = { weight: last.weight, reps: last.reps };
@@ -916,6 +921,7 @@ async function syncToGitHub() {
         routines: getRoutines(),
         appTitle: s.appTitle || "오름",
         aiCoach: getAICoachCache(),
+        doneDays: getDoneDays(),
       },
       null,
       2
@@ -989,6 +995,7 @@ async function loadFromGitHub() {
         document.title = s.appTitle;
       }
       if (parsed.aiCoach && typeof parsed.aiCoach === "object") saveAICoachCache(parsed.aiCoach);
+      if (parsed.doneDays && typeof parsed.doneDays === "object") saveDoneDays(parsed.doneDays);
     } else {
       // 이전 백업 형식 (log.json이 날짜별 기록만 담고 있던 시절) 호환
       saveLogs(parsed);
@@ -1176,7 +1183,7 @@ function computePRs(logs) {
 }
 
 function prBadge(prs, date, idx) {
-  return prs.has(`${date}|${idx}`) ? `<span class="pr-badge">🏆 신기록</span>` : "";
+  return prs.has(`${date}|${idx}`) ? `<span class="pr-badge">${ICON_STAR}신기록</span>` : "";
 }
 
 function announcePR(date, idx) {
@@ -1256,6 +1263,154 @@ function weeklyGoalHtml(logs, settings) {
       <div class="week-text">${text}${streak >= 2 ? `<span class="week-streak">🔥 ${streak}주 연속</span>` : ""}</div>
     </div>
   `;
+}
+
+/* ---------- 운동 끝 (finish the day) ---------- */
+
+const ICON_CHECK = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="5 12.5 10 17 19 7"/></svg>`;
+const ORDINALS = ["첫", "두", "세", "네", "다섯", "여섯", "일곱"];
+
+function getDoneDays() {
+  return loadJSON(LS.done, {});
+}
+function saveDoneDays(obj) {
+  saveJSON(LS.done, obj);
+}
+function isDayDone(key) {
+  return !!getDoneDays()[key];
+}
+function setDayDone(key, done) {
+  const days = getDoneDays();
+  if (done) days[key] = Date.now();
+  else delete days[key];
+  saveDoneDays(days);
+}
+
+function finishSummary() {
+  const logs = getLogs();
+  const key = todayKey();
+  const today = logs[key] || [];
+  const prs = computePRs(logs);
+  const prByEx = {};
+  today.forEach((e, i) => {
+    const pr = prs.get(`${key}|${i}`);
+    if (pr && (!prByEx[e.exerciseId] || pr.now > prByEx[e.exerciseId].now))
+      prByEx[e.exerciseId] = { name: e.exerciseName, noWeight: !!e.noWeight, ...pr, prev: prByEx[e.exerciseId] ? prByEx[e.exerciseId].prev : pr.prev };
+  });
+  const sets = today.reduce((n, e) => n + e.sets.length, 0);
+  const volume = today.reduce((n, e) => n + (e.noWeight ? 0 : e.sets.reduce((m, s) => m + s.weight * s.reps, 0)), 0);
+  const reps = today.reduce((n, e) => n + e.sets.reduce((m, s) => m + s.reps, 0), 0);
+  const goal = Math.min(7, Math.max(1, Number(getSettings().weeklyGoal) || 3));
+  const week = daysLoggedInWeek(logs, weekStart(new Date()));
+  return {
+    exercises: today.length,
+    sets,
+    volume,
+    reps,
+    prs: Object.values(prByEx),
+    goal,
+    weekDone: week.filter((d) => d.logged).length,
+    nth: week.filter((d) => d.logged && d.key <= key).length,
+  };
+}
+
+function finishWorkout() {
+  unlockAudio();
+  setDayDone(todayKey(), true);
+  syncToGitHub();
+  render();
+  showFinishCelebration(finishSummary());
+}
+
+function resumeWorkout() {
+  setDayDone(todayKey(), false);
+  syncToGitHub();
+  render();
+  showToast("다시 기록할 수 있어요. 다 하면 운동 끝을 눌러주세요.");
+}
+
+function showFinishCelebration(sum) {
+  const pr = sum.prs.length > 0;
+  const names = sum.prs.map((p) => p.name);
+  const title = pr ? `신기록 ${sum.prs.length}개 찍고 끝!` : "오늘 운동 끝!";
+  const sub = pr
+    ? `${names.slice(0, 2).join(", ")}${names.length > 2 ? ` 외 ${names.length - 2}개` : ""} 기록이 올랐어요.`
+    : `이번 주 ${ORDINALS[sum.nth - 1] || sum.nth} 번째 운동이에요.`;
+  const third = sum.volume > 0 ? [sum.volume.toLocaleString("ko-KR"), "총 kg"] : [sum.reps, "총 횟수"];
+  const prRows = sum.prs
+    .map((p) => {
+      const val = p.noWeight ? `${p.now}회` : `1RM ${Math.round(p.now)}kg`;
+      const up = Math.round((p.now - p.prev) * 10) / 10;
+      return `<div class="cel-pr">${ICON_STAR}<b>${esc(p.name)}</b><span class="cel-pr-val">${val}</span><span class="cel-pr-up">+${up}${p.noWeight ? "회" : "kg"}</span></div>`;
+    })
+    .join("");
+  const dots = Array.from({ length: sum.goal }, (_, i) => `<i${i < sum.weekDone ? ' class="on"' : ""}></i>`).join("");
+  const weekText = sum.weekDone >= sum.goal ? `이번 주 목표 달성 ${sum.weekDone}/${sum.goal}회` : `이번 주 ${sum.weekDone}/${sum.goal}회`;
+  const burst = Array.from({ length: 9 }, (_, i) => {
+    const a = (i / 9) * Math.PI * 2 - Math.PI / 2;
+    const r = 84 + (i % 3) * 14;
+    return ICON_STAR.replace(
+      "<svg ",
+      `<svg style="--x:${(Math.cos(a) * r).toFixed(0)}px;--y:${(Math.sin(a) * r).toFixed(0)}px;--r:${i % 2 ? 90 : -90}deg" `
+    );
+  }).join("");
+
+  document.getElementById("celebrate")?.remove();
+  const el = document.createElement("div");
+  el.id = "celebrate";
+  el.className = `celebrate${pr ? " pr" : ""}`;
+  el.setAttribute("role", "dialog");
+  el.setAttribute("aria-modal", "true");
+  el.setAttribute("aria-label", title);
+  el.innerHTML = h`
+    <div class="cel-inner">
+      <div class="cel-hero">
+        <svg class="cel-ring" viewBox="0 0 140 140" aria-hidden="true"><circle class="track" cx="70" cy="70" r="60"/><circle class="prog" cx="70" cy="70" r="60"/></svg>
+        ${
+          pr
+            ? `<svg class="cel-mark star" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1.8l2.9 6.6 7.1.7-5.4 4.8 1.6 7-6.2-3.7-6.2 3.7 1.6-7L2 9.1l7.1-.7z"/></svg><div class="cel-burst">${burst}</div>`
+            : `<svg class="cel-mark chk" viewBox="0 0 60 60" aria-hidden="true"><path d="M15 31 l10 10 l20 -22"/></svg>`
+        }
+      </div>
+      <div class="cel-date st" style="--d:0">${new Date().toLocaleDateString("ko-KR", { month: "long", day: "numeric", weekday: "long" })}</div>
+      <h2 class="cel-title st" style="--d:1">${title}</h2>
+      <p class="cel-sub st" style="--d:2">${esc(sub)}</p>
+      <div class="cel-stats st" style="--d:3">
+        <div><b>${sum.exercises}</b><span>종목</span></div>
+        <div><b>${sum.sets}</b><span>세트</span></div>
+        <div><b>${third[0]}</b><span>${third[1]}</span></div>
+      </div>
+      ${pr ? `<div class="cel-prs st" style="--d:4">${prRows}</div>` : ""}
+      <div class="cel-week st" style="--d:5">${dots}<span>${weekText}</span></div>
+      <button class="confirm-btn cel-ok st" style="--d:6" type="button">확인</button>
+    </div>
+  `;
+  // tapping anywhere closes it, even mid-animation
+  el.addEventListener("click", () => {
+    el.classList.add("closing");
+    setTimeout(() => el.remove(), 200);
+  });
+  document.body.appendChild(el);
+  el.querySelector(".cel-ok").focus({ preventScroll: true });
+
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // the chime lands when the ring closes so sound and motion arrive together
+  setTimeout(
+    () =>
+      playTones(
+        pr
+          ? [
+              [660, 0, 0.14],
+              [880, 0.14, 0.14],
+              [1320, 0.28, 0.35],
+            ]
+          : [
+              [523, 0, 0.12],
+              [784, 0.12, 0.3],
+            ]
+      ),
+    reduce ? 0 : 1000
+  );
 }
 
 /* ---------- routines ---------- */
@@ -1443,18 +1598,126 @@ function renderRoutineEditor() {
   `;
 }
 
+/* ---------- growth (all exercises) ---------- */
+
+const ICON_GROWTH = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="15 7 21 7 21 13"/></svg>`;
+const ICON_STAR = `<svg class="star-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 1.8l2.9 6.6 7.1.7-5.4 4.8 1.6 7-6.2-3.7-6.2 3.7 1.6-7L2 9.1l7.1-.7z"/></svg>`;
+const GROWTH_DAYS = 92; // the "3개월" window used for the list's gain and the detail's default range
+const HIST_RANGES = [
+  ["1m", "1개월", 31],
+  ["3m", "3개월", GROWTH_DAYS],
+  ["all", "전체", null],
+];
+
+function goGrowth() {
+  S.screen = "growth";
+  render();
+}
+
+function fmtDateLong(key) {
+  const [, m, d] = key.split("-").map(Number);
+  return `${m}월 ${d}일`;
+}
+
+// best value reached before `sinceKey`, or the first day's value when nothing is older
+function gainSince(days, sinceKey) {
+  const best = Math.max(...days.map((d) => d.v));
+  const before = days.filter((d) => d.date < sinceKey);
+  const base = sinceKey ? (before.length ? Math.max(...before.map((d) => d.v)) : days[0].v) : days[0].v;
+  return best - base;
+}
+
+function fmtGain(g, unit) {
+  return g > 0.05 ? `▲ ${Math.round(g * 10) / 10}${unit}` : "변화 없음";
+}
+
+function sparkSvg(vals) {
+  const W = 64, H = 26, P = 3;
+  const lo = Math.min(...vals), hi = Math.max(...vals);
+  const d = vals
+    .map((v, i) => {
+      const x = P + (vals.length > 1 ? i / (vals.length - 1) : 0.5) * (W - 2 * P);
+      const y = hi === lo ? H / 2 : P + (1 - (v - lo) / (hi - lo)) * (H - 2 * P);
+      return `${i ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  return `<svg class="spark${hi === lo ? " flat" : ""}" viewBox="0 0 ${W} ${H}" aria-hidden="true"><path d="${d}"/></svg>`;
+}
+
+function growthRows(logs, prs) {
+  const since = daysAgoKey(GROWTH_DAYS);
+  return getExercises()
+    .map((ex) => {
+      const days = historyDays(historySessions(ex.id, logs, prs));
+      if (!days.length) return null;
+      const last = days[days.length - 1];
+      return {
+        ex,
+        days,
+        best: Math.max(...days.map((d) => d.v)),
+        gain: gainSince(days, since),
+        lastPr: [...days].reverse().find((d) => d.pr),
+        lastDate: last.date,
+        unit: last.noWeight ? "회" : "kg",
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => (a.lastDate < b.lastDate ? 1 : a.lastDate > b.lastDate ? -1 : 0));
+}
+
+function renderGrowth() {
+  const logs = getLogs();
+  const prs = computePRs(logs);
+  const rows = growthRows(logs, prs);
+  let body;
+  if (!rows.length) {
+    body = `<div class="empty-msg">아직 기록이 없어요.<br>운동을 기록하면 종목별 성장이 여기에 쌓여요.</div>`;
+  } else {
+    const month = todayKey().slice(0, 7);
+    const monthPrs = [...prs.keys()].filter((k) => k.startsWith(month)).length;
+    const top = rows.filter((r) => r.unit === "kg" && r.gain > 0.05).sort((a, b) => b.gain - a.gain)[0];
+    const list = rows
+      .map(
+        (r) => h`
+        <button class="grow-row" data-action="open-history" data-id="${esc(r.ex.id)}">
+          <span class="grow-name">${esc(r.ex.name)}<small>${
+            r.lastPr ? `${ICON_STAR}${fmtDateLong(r.lastPr.date)} 신기록` : `${daysAgoLabel(r.lastDate)} 기록`
+          }</small></span>
+          ${sparkSvg(r.days.slice(-12).map((d) => d.v))}
+          <span class="grow-val"><b>${Math.round(r.best)}<small>${r.unit}</small></b><span class="grow-gain${
+            r.gain > 0.05 ? "" : " flat"
+          }">${fmtGain(r.gain, r.unit)}</span></span>
+        </button>`
+      )
+      .join("");
+    body = h`
+      <div class="grow-sum">
+        <div><b>${ICON_STAR}${monthPrs}번</b><span>${Number(month.slice(5))}월 신기록</span></div>
+        <div><b>${top ? esc(top.ex.name) : "—"}</b><span>3개월 동안 가장 많이 성장</span></div>
+      </div>
+      <div class="category-label">최근 운동한 순</div>
+      <p class="manage-intro">추정 1RM 최고 기록(횟수 종목은 최다 횟수)과 최근 3개월 동안 오른 만큼이에요.</p>
+      <div class="grow-list">${list}</div>
+    `;
+  }
+  app.innerHTML = h`
+    ${renderTopbar("성장", { onBack: true })}
+    ${body}
+    ${tabbarHtml("growth")}
+  `;
+}
+
 /* ---------- exercise history ---------- */
 
 function openHistory(id) {
   S.historyId = id;
   S.historyFrom = S.screen;
+  S.historyRange = null; // picked on first render
   S.screen = "history";
   render();
 }
 
-function historySessions(id) {
-  const logs = getLogs();
-  const prs = computePRs(logs);
+function historySessions(id, logs, prs) {
   const sessions = [];
   Object.keys(logs)
     .sort()
@@ -1462,10 +1725,25 @@ function historySessions(id) {
       (logs[date] || []).forEach((entry, idx) => {
         if (entry.exerciseId !== id || !entry.sets.length) return;
         const top = entry.sets.reduce((a, s) => (s.weight > a.weight || (s.weight === a.weight && s.reps > a.reps) ? s : a));
-        sessions.push({ date, entry, best: entryBest(entry), top, pr: prs.has(`${date}|${idx}`) });
+        const pr = prs.get(`${date}|${idx}`);
+        sessions.push({ date, entry, best: entryBest(entry), top, pr: !!pr, prPrev: pr ? pr.prev : null });
       });
     });
   return sessions;
+}
+
+// one point per day: the day's best session
+function historyDays(sessions) {
+  const days = [];
+  sessions.forEach((s) => {
+    const p = { date: s.date, v: s.best, pr: s.pr, prPrev: s.prPrev, top: s.top, entry: s.entry, noWeight: !!s.entry.noWeight };
+    const prev = days[days.length - 1];
+    if (prev && prev.date === p.date) {
+      if (p.v > prev.v) Object.assign(prev, p, { pr: prev.pr || p.pr, prPrev: prev.prPrev ?? p.prPrev });
+      else if (p.pr) Object.assign(prev, { pr: true, prPrev: prev.prPrev ?? p.prPrev });
+    } else days.push(p);
+  });
+  return days;
 }
 
 function fmtDate(key) {
@@ -1473,8 +1751,10 @@ function fmtDate(key) {
   return `${m}. ${d}`;
 }
 
+const HIST_W = 340, HIST_H = 190, HIST_L = 34, HIST_R = 16, HIST_T = 18, HIST_B = 26;
+
 function historyChartSvg(points, unit) {
-  const W = 340, H = 190, L = 34, R = 16, T = 26, B = 26;
+  const W = HIST_W, H = HIST_H, L = HIST_L, R = HIST_R, T = HIST_T, B = HIST_B;
   const t0 = new Date(points[0].date).getTime();
   const t1 = new Date(points[points.length - 1].date).getTime();
   const vals = points.map((p) => p.v);
@@ -1484,6 +1764,8 @@ function historyChartSvg(points, unit) {
   hi = hi + pad;
   const x = (p) => (t1 === t0 ? (L + W - R) / 2 : L + ((new Date(p.date).getTime() - t0) / (t1 - t0)) * (W - L - R));
   const y = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+  S.historyXs = points.map((p) => x(p));
+  S.historyYs = points.map((p) => y(p.v));
   const grid = [lo, (lo + hi) / 2, hi]
     .map(
       (g) =>
@@ -1491,74 +1773,121 @@ function historyChartSvg(points, unit) {
     )
     .join("");
   const path = points.map((p, i) => `${i ? "L" : "M"}${x(p).toFixed(1)},${y(p.v).toFixed(1)}`).join(" ");
+  const area = `${path} L${x(points[points.length - 1]).toFixed(1)},${H - B} L${x(points[0]).toFixed(1)},${H - B} Z`;
   const last = points[points.length - 1];
   const marks = points
-    .map(
-      (p, i) => `
-      <g class="hist-pt" data-action="hist-point" data-i="${i}">
-        <circle cx="${x(p)}" cy="${y(p.v)}" r="16" class="hist-hit"/>
-        <circle cx="${x(p)}" cy="${y(p.v)}" r="4.5" class="hist-dot${p.pr ? " pr" : ""}"/>
-      </g>`
+    .map((p) =>
+      p.pr
+        ? `<path class="hist-star" transform="translate(${(x(p) - 8).toFixed(1)},${(y(p.v) - 8).toFixed(1)}) scale(0.667)" d="M12 1.8l2.9 6.6 7.1.7-5.4 4.8 1.6 7-6.2-3.7-6.2 3.7 1.6-7L2 9.1l7.1-.7z"/>`
+        : `<circle cx="${x(p).toFixed(1)}" cy="${y(p.v).toFixed(1)}" r="4" class="hist-dot"/>`
     )
     .join("");
   return h`
-    <svg class="hist-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="날짜별 기록 변화 그래프">
+    <svg class="hist-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${fmtDateLong(points[0].date)} ${Math.round(points[0].v)}${unit}에서 ${fmtDateLong(last.date)} ${Math.round(last.v)}${unit}까지 변화 그래프">
       ${grid}
       <text x="${L}" y="${H - 6}" class="hist-axis">${fmtDate(points[0].date)}</text>
       <text x="${W - R}" y="${H - 6}" class="hist-axis" text-anchor="end">${fmtDate(last.date)}</text>
+      <path d="${area}" class="hist-area"/>
       <path d="${path}" class="hist-line"/>
+      <line id="hist-cross" class="hist-cross" x1="0" x2="0" y1="${T}" y2="${H - B}" visibility="hidden"/>
       ${marks}
-      <text x="${Math.min(x(last), W - R)}" y="${y(last.v) - 12}" class="hist-last" text-anchor="end">${Math.round(last.v)}${unit}</text>
+      <circle id="hist-ring" class="hist-ring" r="8" cx="0" cy="0" visibility="hidden"/>
     </svg>
   `;
 }
 
+function historyReadout(p) {
+  const unit = S.historyUnit;
+  if (!p) {
+    const pts = S.historyPoints;
+    return `<b>${fmtDateLong(pts[0].date)} ~ ${fmtDateLong(pts[pts.length - 1].date)}</b><span>그래프를 눌러 그날 기록 보기</span>`;
+  }
+  const detail = p.noWeight
+    ? `세트 ${p.entry.sets.map((s) => `${s.reps}회`).join(", ")}`
+    : `가장 무거운 세트 ${p.top.weight}kg × ${p.top.reps}회`;
+  return `<b>${fmtDateLong(p.date)} · ${Math.round(p.v)}${unit}${p.pr ? " · 신기록" : ""}</b><span>${esc(detail)}</span>`;
+}
+
 function renderHistory() {
   const ex = getExercises().find((x) => x.id === S.historyId) || { id: S.historyId, name: "종목" };
-  const sessions = historySessions(S.historyId);
+  const logs = getLogs();
+  const sessions = historySessions(S.historyId, logs, computePRs(logs));
   const noWeight = sessions.length ? !!sessions[sessions.length - 1].entry.noWeight : !!ex.noWeight;
   const unit = noWeight ? "회" : "kg";
   const metric = noWeight ? "최다 횟수" : "추정 1RM";
   S.historyUnit = unit;
+  S.historyPoints = null;
 
   let body;
   if (sessions.length === 0) {
     body = `<div class="empty-msg">아직 기록이 없어요. 이 종목을 한 번 기록하면 여기에 쌓여요.</div>`;
   } else {
-    const bestSession = sessions.reduce((a, s) => (s.best > a.best ? s : a));
+    const days = historyDays(sessions);
+    const sinceOf = (key) => {
+      const r = HIST_RANGES.find((x) => x[0] === key);
+      return r[2] ? daysAgoKey(r[2]) : "";
+    };
+    if (!S.historyRange) S.historyRange = days.filter((d) => d.date >= sinceOf("3m")).length >= 2 ? "3m" : "all";
+    const since = sinceOf(S.historyRange);
+    const rangeLabel = HIST_RANGES.find((x) => x[0] === S.historyRange)[1];
+    const pts = days.filter((d) => d.date >= since);
+    const best = Math.max(...days.map((d) => d.v));
+    const gain = gainSince(days, since);
     const heaviest = sessions.reduce((a, s) => (s.top.weight > a.top.weight ? s : a));
-    const points = sessions.map((s) => ({ date: s.date, v: s.best, pr: s.pr }));
-    // one point per day: keep the day's best
-    const byDay = [];
-    points.forEach((p) => {
-      const prev = byDay[byDay.length - 1];
-      if (prev && prev.date === p.date) {
-        if (p.v > prev.v) prev.v = p.v;
-        prev.pr = prev.pr || p.pr;
-      } else byDay.push({ ...p });
-    });
-    S.historyPoints = byDay;
+    const prCount = days.filter((d) => d.pr).length;
+
+    const hero = h`
+      <div class="hist-hero">
+        <div class="hist-hero-label">${
+          noWeight ? "최다 횟수" : `추정 1RM <button class="hist-info" data-action="rm-info" aria-label="추정 1RM 설명">i</button>`
+        }</div>
+        <div class="hist-hero-num">${Math.round(best)}<small>${unit}</small></div>
+        <div class="hist-hero-gain${gain > 0.05 ? "" : " flat"}">${fmtGain(gain, unit)}<span> · ${
+          S.historyRange === "all" ? "첫 기록보다" : `최근 ${rangeLabel} 동안`
+        }</span></div>
+      </div>`;
+    const seg =
+      days.length >= 2
+        ? `<div class="segmented hist-seg">${HIST_RANGES.map(
+            ([k, l]) => `<button class="seg-btn${k === S.historyRange ? " active" : ""}" data-action="hist-range" data-v="${k}">${l}</button>`
+          ).join("")}</div>`
+        : "";
+    let chart;
+    if (days.length < 2) chart = `<div class="empty-msg">두 번 이상 기록하면 변화 그래프가 그려져요.</div>`;
+    else if (pts.length < 2)
+      chart = `<div class="empty-msg">최근 ${rangeLabel} 동안은 기록이 ${pts.length ? "한 번뿐" : "없어"}요.<br>기간을 늘려보세요.</div>`;
+    else {
+      S.historyPoints = pts;
+      chart = h`
+        <div class="hist-card">
+          <div class="hist-readout" id="hist-readout">${historyReadout(null)}</div>
+          ${historyChartSvg(pts, unit)}
+          <div class="hist-legend"><span><i></i>${metric}</span><span>${ICON_STAR}신기록</span></div>
+        </div>`;
+    }
     const stats = noWeight
       ? [
-          [`${bestSession.best}회`, "최다 횟수"],
           [`${sessions.length}번`, "운동한 횟수"],
+          [`${prCount}번`, "신기록"],
         ]
       : [
-          [`${Math.round(bestSession.best)}kg`, "최고 추정 1RM"],
           [`${heaviest.top.weight}kg × ${heaviest.top.reps}`, "가장 무거운 세트"],
           [`${sessions.length}번`, "운동한 횟수"],
         ];
-    const chart =
-      byDay.length >= 2
-        ? h`
-          <div class="hist-card">
-            <div class="hist-head">
-              <span class="hist-title">${metric} 변화</span>
-              <span class="hist-readout" id="hist-readout">점을 탭하면 값이 보여요</span>
-            </div>
-            ${historyChartSvg(byDay, unit)}
-          </div>`
-        : `<div class="empty-msg">두 번 이상 기록하면 변화 그래프가 그려져요.</div>`;
+    const prDays = pts.filter((d) => d.pr).reverse();
+    const prList = prDays.length
+      ? h`
+        <div class="category-label">신기록 ${prDays.length}번</div>
+        <div class="hist-prs">${prDays
+          .slice(0, 5)
+          .map(
+            (d) => h`
+          <div class="hist-pr">${ICON_STAR}<span class="hist-pr-date">${fmtDate(d.date)}</span><span class="hist-pr-val">${Math.round(d.v)}${unit}${
+              noWeight ? "" : `<small>${d.top.weight}kg × ${d.top.reps}</small>`
+            }</span><span class="hist-pr-up">+${Math.round((d.v - d.prPrev) * 10) / 10}${unit}</span></div>`
+          )
+          .join("")}</div>`
+      : "";
     const recent = sessions
       .slice(-10)
       .reverse()
@@ -1566,7 +1895,7 @@ function renderHistory() {
         (s) => h`
         <div class="day-set-card">
           <div class="day-set-head">
-            <span class="day-set-name">${fmtDate(s.date)}${s.pr ? ` <span class="pr-badge">🏆 신기록</span>` : ""}</span>
+            <span class="day-set-name">${fmtDateLong(s.date)}${s.pr ? ` <span class="pr-badge">${ICON_STAR}신기록</span>` : ""}</span>
             <span class="hist-best">${noWeight ? `${s.best}회` : `1RM ${Math.round(s.best)}kg`}</span>
           </div>
           <div class="day-set-chips">
@@ -1576,8 +1905,11 @@ function renderHistory() {
       )
       .join("");
     body = h`
-      <div class="hist-stats">${stats.map(([v, l]) => `<div class="hist-stat"><b>${v}</b><span>${l}</span></div>`).join("")}</div>
+      ${hero}
+      ${seg}
       ${chart}
+      <div class="hist-stats">${stats.map(([v, l]) => `<div class="hist-stat"><b>${v}</b><span>${l}</span></div>`).join("")}</div>
+      ${prList}
       <div class="category-label">최근 기록</div>
       <div class="set-list">${recent}</div>
     `;
@@ -1591,10 +1923,41 @@ function renderHistory() {
 function showHistoryPoint(i) {
   const p = S.historyPoints && S.historyPoints[i];
   const out = document.getElementById("hist-readout");
-  if (!p || !out) return;
-  out.textContent = `${fmtDate(p.date)}  ${Math.round(p.v)}${S.historyUnit}${p.pr ? " 🏆" : ""}`;
-  document.querySelectorAll(".hist-pt").forEach((g) => g.classList.toggle("active", g.dataset.i === String(i)));
+  const cross = document.getElementById("hist-cross");
+  const ring = document.getElementById("hist-ring");
+  if (!p || !out || !cross || !ring) return;
+  out.innerHTML = historyReadout(p);
+  const x = S.historyXs[i], y = S.historyYs[i];
+  cross.setAttribute("x1", x);
+  cross.setAttribute("x2", x);
+  ring.setAttribute("cx", x);
+  ring.setAttribute("cy", y);
+  cross.setAttribute("visibility", "visible");
+  ring.setAttribute("visibility", "visible");
 }
+
+// press or drag across the chart to read the nearest day (vertical drags still scroll: touch-action pan-y)
+let histScrubbing = false;
+function scrubHistory(e) {
+  const svg = document.querySelector(".hist-chart");
+  if (!svg || !S.historyXs) return;
+  const r = svg.getBoundingClientRect();
+  const px = ((e.clientX - r.left) / r.width) * HIST_W;
+  let bi = 0;
+  S.historyXs.forEach((x, i) => {
+    if (Math.abs(x - px) < Math.abs(S.historyXs[bi] - px)) bi = i;
+  });
+  showHistoryPoint(bi);
+}
+document.addEventListener("pointerdown", (e) => {
+  if (S.screen !== "history" || !e.target.closest(".hist-chart")) return;
+  histScrubbing = true;
+  scrubHistory(e);
+});
+document.addEventListener("pointermove", (e) => {
+  if (histScrubbing) scrubHistory(e);
+});
+["pointerup", "pointercancel"].forEach((t) => document.addEventListener(t, () => (histScrubbing = false)));
 
 /* ---------- long press (exercise → history, routine → edit) ---------- */
 
@@ -1703,6 +2066,7 @@ function renderScreen() {
   if (S.screen === "backfillpick") return renderBackfillPick();
   if (S.screen === "routine") return renderRoutineEditor();
   if (S.screen === "history") return renderHistory();
+  if (S.screen === "growth") return renderGrowth();
 }
 
 function renderTopbar(title, opts) {
@@ -1762,6 +2126,7 @@ function tabbarHtml(active) {
   const tabs = [
     ["home", "back", ICON_HOME, "홈"],
     ["calendar", "calendar", ICON_CALENDAR, "운동일정"],
+    ["growth", "growth", ICON_GROWTH, "성장"],
     ["manage", "manage", ICON_DUMBBELL, "종목설정"],
     ["aicoaching", "open-ai-coaching", ICON_SPARKLE, "AI 코칭"],
   ];
@@ -1809,11 +2174,13 @@ function renderHome() {
   const prs = computePRs(logs);
 
   let todayHtml = "";
+  const dayDone = isDayDone(todayKey());
   if (today.length > 0) {
     todayHtml = h`
       <div class="today-box${S.todayCollapsed ? " collapsed" : ""}">
         <div class="today-box-head" data-action="toggle-today">
           <h3>오늘</h3>
+          ${dayDone ? `<span class="done-chip">${ICON_CHECK}운동 끝</span>` : ""}
           <span class="today-count">${today.length}개 종목, ${today.reduce((n, e) => n + e.sets.length, 0)}세트</span>
           <span class="today-chevron"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
         </div>
@@ -1840,6 +2207,11 @@ function renderHome() {
             .join("")}
         </div>
       </div>
+      ${
+        dayDone
+          ? `<button class="big-btn ghost resume-btn" data-action="resume-workout">운동 이어하기</button>`
+          : `<button class="finish-btn" data-action="finish-workout">${ICON_CHECK}운동 끝</button>`
+      }
     `;
   }
 
@@ -2303,7 +2675,6 @@ function renderManage() {
                       : h`<div class="ex-setting"><span>처음 시작 무게</span>${weightStepperHtml("sw-step", e.id, e.startWeight ?? 20)}</div>`
                   }
                   <div class="ex-panel-actions">
-                    <button class="pill-btn" data-action="open-history" data-id="${esc(e.id)}">성장 기록 보기</button>
                     <button class="pill-btn danger" data-action="del-exercise" data-id="${esc(e.id)}">삭제</button>
                   </div>
                 </div>`
@@ -2617,7 +2988,9 @@ function renderCalendar() {
     if (prDates.has(key)) cls += " has-pr";
     if (key === today) cls += " today";
     if (key === S.calSelected) cls += " selected";
-    cells += `<div class="${cls}" data-action="cal-pick-day" data-key="${key}">${day}</div>`;
+    const star = prDates.has(key) ? `<span class="cal-pr">${ICON_STAR}</span>` : "";
+    const label = `${m + 1}월 ${day}일${hasLog ? ", 운동한 날" : ""}${star ? ", 신기록" : ""}`;
+    cells += `<div class="${cls}" data-action="cal-pick-day" data-key="${key}" aria-label="${label}">${day}${star}</div>`;
   }
 
   let detailHtml = "";
@@ -2676,6 +3049,7 @@ function renderCalendar() {
     </div>
     <div class="cal-weekdays">${WEEKDAY_LABELS.map((d) => `<span>${d}</span>`).join("")}</div>
     <div class="cal-grid">${cells}</div>
+    <div class="cal-legend"><span><i class="cal-legend-log"></i>운동한 날</span><span><span class="cal-pr">${ICON_STAR}</span>신기록</span></div>
     ${detailHtml}
     ${tabbarHtml("calendar")}
   `;
@@ -2790,8 +3164,15 @@ app.addEventListener("click", (e) => {
     case "open-history":
       openHistory(el.dataset.id);
       break;
-    case "hist-point":
-      showHistoryPoint(Number(el.dataset.i));
+    case "hist-range":
+      S.historyRange = el.dataset.v;
+      render();
+      break;
+    case "rm-info":
+      showToast("추정 1RM은 무게와 횟수로 계산한 1회 최대 무게예요");
+      break;
+    case "growth":
+      goGrowth();
       break;
     case "back":
       handleBack();
@@ -2919,6 +3300,12 @@ app.addEventListener("click", (e) => {
       break;
     case "edit-reps":
       startEditReps();
+      break;
+    case "finish-workout":
+      finishWorkout();
+      break;
+    case "resume-workout":
+      resumeWorkout();
       break;
     case "toggle-today":
       S.todayCollapsed = !S.todayCollapsed;
@@ -3133,7 +3520,7 @@ function handleBack() {
     S.screen = "home";
     render();
   } else if (S.screen === "history") {
-    S.screen = S.historyFrom === "manage" ? "manage" : "home";
+    S.screen = S.historyFrom === "growth" ? "growth" : "home";
     render();
   } else if (S.screen === "backfillpick") {
     S.logTargetDate = null;
@@ -3154,6 +3541,7 @@ function handleBack() {
   } else if (
     S.screen === "settings" ||
     S.screen === "calendar" ||
+    S.screen === "growth" ||
     S.screen === "coaching" ||
     S.screen === "aicoaching"
   ) {
@@ -3164,7 +3552,7 @@ function handleBack() {
 
 /* ---------- press feedback (iOS Safari doesn't reliably fire :active on tap) ---------- */
 
-const PRESSABLE = ".big-btn, .confirm-btn, .stepper-btn, .iconbtn, .tab-btn[data-action], .del-btn, .cal-cell, .set-row[data-action], .coach-teaser[data-action], .row-del, .row-edit, .add-log-btn, .stepper-value[data-action], .today-box-head, .voice-cta-btn, .rest-btn, .routine-chip, .routine-pick, .seg-btn, .ex-row, .mini-step, .pill-btn, .voice-mic-btn, .model-pick-list .pill";
+const PRESSABLE = ".big-btn, .confirm-btn, .stepper-btn, .iconbtn, .tab-btn[data-action], .del-btn, .cal-cell, .set-row[data-action], .coach-teaser[data-action], .row-del, .row-edit, .add-log-btn, .stepper-value[data-action], .today-box-head, .voice-cta-btn, .finish-btn, .rest-btn, .routine-chip, .routine-pick, .seg-btn, .grow-row, .ex-row, .mini-step, .pill-btn, .voice-mic-btn, .model-pick-list .pill";
 
 function clearPressed() {
   document.querySelectorAll(".pressed").forEach((el) => el.classList.remove("pressed"));
