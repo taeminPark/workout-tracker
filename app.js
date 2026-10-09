@@ -1847,8 +1847,9 @@ function renderHistory() {
     const pts = days.filter((d) => d.date >= since);
     const best = Math.max(...days.map((d) => d.v));
     const gain = gainSince(days, since);
-    const heaviest = sessions.reduce((a, s) => (s.top.weight > a.top.weight ? s : a));
-    const prCount = days.filter((d) => d.pr).length;
+    const inRange = sessions.filter((s) => s.date >= since);
+    const heaviest = inRange.length ? inRange.reduce((a, s) => (s.top.weight > a.top.weight ? s : a)) : null;
+    const prCount = pts.filter((d) => d.pr).length;
 
     const hero = h`
       <div class="hist-hero">
@@ -1881,12 +1882,12 @@ function renderHistory() {
     }
     const stats = noWeight
       ? [
-          [`${sessions.length}번`, "운동한 횟수"],
+          [`${inRange.length}번`, "운동한 횟수"],
           [`${prCount}번`, "신기록"],
         ]
       : [
-          [`${heaviest.top.weight}kg × ${heaviest.top.reps}`, "가장 무거운 세트"],
-          [`${sessions.length}번`, "운동한 횟수"],
+          [heaviest ? `${heaviest.top.weight}kg × ${heaviest.top.reps}` : "—", "가장 무거운 세트"],
+          [`${inRange.length}번`, "운동한 횟수"],
         ];
     const prDays = pts.filter((d) => d.pr).reverse();
     const prList = prDays.length
