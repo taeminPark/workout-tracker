@@ -2353,10 +2353,6 @@ function renderFlow() {
     : weightInput === "ruler"
     ? h`
       <div class="ruler-wrap"><div class="weight-ruler" id="weight-ruler"><div class="ruler-track" id="weight-ruler-track"></div></div></div>
-      <div class="stepper-row ruler-fine">
-        <button class="mini-step" data-action="ruler-nudge" data-d="-2.5">−2.5</button>
-        <button class="mini-step" data-action="ruler-nudge" data-d="2.5">+2.5</button>
-      </div>
       <div class="dial-hint">좌우로 밀어서 맞춰요.</div>
     `
     : weightInput === "wheel"
@@ -2508,12 +2504,6 @@ function attachRulerEvents() {
     S.draftWeight = idx;
     weightTick();
   }, { passive: true });
-}
-
-function nudgeRuler(delta) {
-  S.draftWeight = Math.max(0, roundTo(S.draftWeight + delta, 2));
-  render(); // rebuilds the ruler aimed at the new weight, keeping any half kilo
-  weightTick();
 }
 
 // weight wheels: whole kg on the left, .0 / .5 on the right (iOS picker style)
@@ -3294,9 +3284,6 @@ app.addEventListener("click", (e) => {
     case "edit-routine":
       S.routineEditMode = false;
       openRoutineEditor(el.dataset.id);
-      break;
-    case "ruler-nudge":
-      nudgeRuler(Number(el.dataset.d));
       break;
     case "set-weight-input": {
       const st = getSettings();

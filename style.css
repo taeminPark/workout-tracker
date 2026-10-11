@@ -507,7 +507,6 @@ button, input, textarea, select { font-family: inherit; }
   color: var(--text-2);
   font-variant-numeric: tabular-nums;
 }
-.ruler-fine .mini-step { width: auto; height: 44px; padding: 0 20px; font-size: 17px; font-variant-numeric: tabular-nums; }
 
 /* ---------- weight wheels (설정 › 무게 입력 방식 › 휠) ---------- */
 .wheels { position: relative; display: flex; gap: 2px; width: 210px; height: 200px; }
