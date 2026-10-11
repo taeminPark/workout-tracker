@@ -456,6 +456,96 @@ button, input, textarea, select { font-family: inherit; }
 }
 .dial-pulse { animation: dial-pulse 0.16s ease-out; display: inline-block; }
 
+/* ---------- weight ruler (설정 › 무게 입력 방식 › 눈금자) ---------- */
+.ruler-wrap { position: relative; width: 100%; max-width: 360px; }
+.ruler-wrap::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -6px;
+  width: 4px;
+  height: 58px;
+  margin-left: -2px;
+  border-radius: 2px;
+  background: var(--accent);
+  pointer-events: none;
+}
+.weight-ruler {
+  height: 86px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  touch-action: pan-x;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 22%, #000 78%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 22%, #000 78%, transparent);
+}
+.weight-ruler::-webkit-scrollbar { display: none; }
+.weight-ruler * { touch-action: pan-x; }
+.ruler-track { display: flex; height: 100%; }
+.ruler-pad { flex: 0 0 var(--ruler-pad, 0px); }
+.ruler-tick { flex: 0 0 12px; height: 100%; position: relative; scroll-snap-align: center; }
+.ruler-tick::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 2px;
+  height: 22px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--text-3);
+}
+.ruler-tick.m5::before { height: 34px; background: var(--text-2); }
+.ruler-tick.m10::before { height: 46px; background: var(--text); }
+.ruler-tick span {
+  position: absolute;
+  top: 54px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 12px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.ruler-fine .mini-step { width: auto; height: 44px; padding: 0 20px; font-size: 17px; font-variant-numeric: tabular-nums; }
+
+/* ---------- weight wheels (설정 › 무게 입력 방식 › 휠) ---------- */
+.wheels { position: relative; display: flex; gap: 2px; width: 210px; height: 200px; }
+.wheels::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 80px;
+  height: 40px;
+  border-radius: var(--r-md);
+  background: var(--fill);
+  pointer-events: none;
+}
+.wheel {
+  flex: 1;
+  height: 100%;
+  overflow-y: auto;
+  scroll-snap-type: y mandatory;
+  scrollbar-width: none;
+  touch-action: pan-y;
+  -webkit-mask-image: linear-gradient(transparent, #000 35%, #000 65%, transparent);
+  mask-image: linear-gradient(transparent, #000 35%, #000 65%, transparent);
+}
+.wheel::-webkit-scrollbar { display: none; }
+.wheel-frac { flex: 0.6; }
+.wheel-pad { height: 80px; }
+.wheel-row {
+  height: 40px;
+  line-height: 40px;
+  text-align: center;
+  font-size: 24px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  scroll-snap-align: center;
+}
+.wheel-unit { position: absolute; right: -28px; top: 80px; line-height: 40px; font-size: 16px; font-weight: 600; color: var(--text-2); }
+
 .confirm-btn {
   display: block;
   width: 100%;

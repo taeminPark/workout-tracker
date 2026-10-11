@@ -86,6 +86,7 @@ function getSettings() {
     weeklyGoal: 3,
     restDefault: 90,
     theme: "auto",
+    weightInput: "dial",
   });
 }
 function saveSettings(s) {
@@ -2341,12 +2342,31 @@ function renderFlow() {
     return `<div class="${cls}"></div>`;
   }).join("");
 
+  const weightInput = getSettings().weightInput || "dial";
   const controlHtml = isReps
     ? h`
       <div class="stepper-row">
         <button class="stepper-btn" data-action="step-down">−</button>
         <button class="stepper-btn" data-action="step-up">+</button>
       </div>
+    `
+    : weightInput === "ruler"
+    ? h`
+      <div class="ruler-wrap"><div class="weight-ruler" id="weight-ruler"><div class="ruler-track" id="weight-ruler-track"></div></div></div>
+      <div class="stepper-row ruler-fine">
+        <button class="mini-step" data-action="ruler-nudge" data-d="-2.5">−2.5</button>
+        <button class="mini-step" data-action="ruler-nudge" data-d="2.5">+2.5</button>
+      </div>
+      <div class="dial-hint">좌우로 밀어서 맞춰요.</div>
+    `
+    : weightInput === "wheel"
+    ? h`
+      <div class="wheels">
+        <div class="wheel" id="wheel-int"></div>
+        <div class="wheel wheel-frac" id="wheel-frac"></div>
+        <span class="wheel-unit">kg</span>
+      </div>
+      <div class="dial-hint">위아래로 굴려서 가운데 줄에 맞춰요.</div>
     `
     : h`
       <div class="dial-outer">
@@ -2386,7 +2406,11 @@ function renderFlow() {
     </div>
   `;
 
-  if (!isReps) attachDialEvents();
+  if (!isReps) {
+    if (weightInput === "ruler") attachRulerEvents();
+    else if (weightInput === "wheel") attachWheelEvents();
+    else attachDialEvents();
+  }
 }
 
 function startEditReps() {
@@ -2444,6 +2468,84 @@ function playDialTick() {
 }
 
 const WEIGHT_STEP_OPTIONS = [1, 5, 10];
+
+function weightTick() {
+  const numEl = document.getElementById("draft-num");
+  if (numEl) {
+    numEl.textContent = S.draftWeight;
+    numEl.classList.remove("dial-pulse");
+    void numEl.offsetWidth;
+    numEl.classList.add("dial-pulse");
+  }
+  if (navigator.vibrate) navigator.vibrate(4);
+  playDialTick();
+}
+
+// weight ruler: one tick per 1kg, scroll-snapped under a fixed center pointer
+const RULER_TICK_PX = 12;
+
+function attachRulerEvents() {
+  const ruler = document.getElementById("weight-ruler");
+  const track = document.getElementById("weight-ruler-track");
+  if (!ruler || !track) return;
+  const max = Math.max(300, Math.ceil(S.draftWeight) + 50);
+  let html = '<div class="ruler-pad"></div>';
+  for (let i = 0; i <= max; i++) {
+    const cls = i % 10 === 0 ? " m10" : i % 5 === 0 ? " m5" : "";
+    html += `<div class="ruler-tick${cls}">${i % 10 === 0 ? `<span>${i}</span>` : ""}</div>`;
+  }
+  html += '<div class="ruler-pad"></div>';
+  track.innerHTML = html;
+  track.style.setProperty("--ruler-pad", `${ruler.clientWidth / 2 - RULER_TICK_PX / 2}px`);
+
+  // only a scroll that lands on a different tick changes the weight, so 57.5 stays 57.5 until the ruler is moved
+  let lastIdx = Math.floor(S.draftWeight);
+  ruler.scrollLeft = lastIdx * RULER_TICK_PX;
+  ruler.addEventListener("scroll", () => {
+    const idx = Math.max(0, Math.min(max, Math.round(ruler.scrollLeft / RULER_TICK_PX)));
+    if (idx === lastIdx) return;
+    lastIdx = idx;
+    S.draftWeight = idx;
+    weightTick();
+  }, { passive: true });
+}
+
+function nudgeRuler(delta) {
+  S.draftWeight = Math.max(0, roundTo(S.draftWeight + delta, 2));
+  render(); // rebuilds the ruler aimed at the new weight, keeping any half kilo
+  weightTick();
+}
+
+// weight wheels: whole kg on the left, .0 / .5 on the right (iOS picker style)
+const WHEEL_ROW_PX = 40;
+const WHEEL_FRACS = [0, 0.5];
+
+function attachWheelEvents() {
+  const wi = document.getElementById("wheel-int");
+  const wf = document.getElementById("wheel-frac");
+  if (!wi || !wf) return;
+  const max = Math.max(300, Math.ceil(S.draftWeight) + 50);
+  const rows = (items) => `<div class="wheel-pad"></div>${items.map((x) => `<div class="wheel-row">${x}</div>`).join("")}<div class="wheel-pad"></div>`;
+  wi.innerHTML = rows(Array.from({ length: max + 1 }, (_, i) => i));
+  wf.innerHTML = rows(WHEEL_FRACS.map((f) => `.${String(f).split(".")[1] || "0"}`));
+
+  let intIdx = Math.floor(S.draftWeight);
+  let fracIdx = S.draftWeight - intIdx >= 0.5 ? 1 : 0;
+  wi.scrollTop = intIdx * WHEEL_ROW_PX;
+  wf.scrollTop = fracIdx * WHEEL_ROW_PX;
+
+  const onScroll = (el, isInt) => () => {
+    const count = isInt ? max + 1 : WHEEL_FRACS.length;
+    const idx = Math.max(0, Math.min(count - 1, Math.round(el.scrollTop / WHEEL_ROW_PX)));
+    if (idx === (isInt ? intIdx : fracIdx)) return;
+    if (isInt) intIdx = idx;
+    else fracIdx = idx;
+    S.draftWeight = intIdx + WHEEL_FRACS[fracIdx];
+    weightTick();
+  };
+  wi.addEventListener("scroll", onScroll(wi, true), { passive: true });
+  wf.addEventListener("scroll", onScroll(wf, false), { passive: true });
+}
 
 function attachDialEvents() {
   const dial = document.getElementById("weight-dial");
@@ -2753,6 +2855,17 @@ function renderSettings() {
     <div class="form-row">
       <label>세트 사이 기본 휴식 시간 (초)</label>
       <input id="set-rest-default" type="number" inputmode="numeric" min="5" step="15" value="${esc(String(defaultRestSec()))}" />
+    </div>
+    <div class="form-row">
+      <label>무게 입력 방식</label>
+      <div class="segmented">
+        ${[["dial", "다이얼"], ["ruler", "눈금자"], ["wheel", "휠"]]
+          .map(
+            ([v, l]) =>
+              `<button class="seg-btn${(s.weightInput || "dial") === v ? " active" : ""}" data-action="set-weight-input" data-v="${v}">${l}</button>`
+          )
+          .join("")}
+      </div>
     </div>
     <div class="form-row">
       <label>화면 테마</label>
@@ -3182,6 +3295,16 @@ app.addEventListener("click", (e) => {
       S.routineEditMode = false;
       openRoutineEditor(el.dataset.id);
       break;
+    case "ruler-nudge":
+      nudgeRuler(Number(el.dataset.d));
+      break;
+    case "set-weight-input": {
+      const st = getSettings();
+      st.weightInput = el.dataset.v;
+      saveSettings(st);
+      render();
+      break;
+    }
     case "set-theme": {
       const st = getSettings();
       st.theme = el.dataset.v;
@@ -3647,7 +3770,7 @@ document.addEventListener("pointerleave", clearPressed, true);
     (e) => {
       if (e.touches.length !== 1) return;
       const t = e.touches[0];
-      if (t.clientX > EDGE_ZONE || !canGoBack()) {
+      if (t.clientX > EDGE_ZONE || !canGoBack() || e.target.closest(".weight-ruler")) {
         tracking = false;
         return;
       }
