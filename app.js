@@ -2596,7 +2596,14 @@ function renderSummary() {
       (s, i) => h`
     <div class="set-row" data-action="edit-set" data-i="${i}">
       <span class="set-idx">세트 ${i + 1}</span>
-      <span class="set-val">${S.currentExercise.noWeight ? `${s.reps}회` : `${s.weight}kg × ${s.reps}회`}</span>
+      <span class="row-right">
+        <span class="set-val">${S.currentExercise.noWeight ? `${s.reps}회` : `${s.weight}kg × ${s.reps}회`}</span>
+        ${
+          S.sets.length > 1
+            ? `<button class="row-del" data-action="del-set" data-i="${i}" aria-label="세트 ${i + 1} 삭제">${ICON_TRASH}</button>`
+            : ""
+        }
+      </span>
     </div>
   `
     )
@@ -3357,6 +3364,11 @@ app.addEventListener("click", (e) => {
       break;
     case "end-early":
       endEarly();
+      break;
+    case "del-set":
+      S.sets.splice(Number(el.dataset.i), 1);
+      S.targetSets = S.sets.length;
+      render();
       break;
     case "add-set":
       addExtraSet();
