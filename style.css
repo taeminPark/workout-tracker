@@ -473,6 +473,17 @@ button, input, textarea, select { font-family: inherit; }
   margin-top: 6px;
   transition: background var(--fast), transform var(--fast), filter var(--fast);
 }
+.end-early-btn {
+  display: block;
+  margin: 4px auto 0;
+  background: none;
+  border: none;
+  color: var(--text-3);
+  font-size: 15px;
+  font-weight: 600;
+  padding: 12px 16px;
+}
+.end-early-btn:active { color: var(--text); }
 .confirm-btn:active, .confirm-btn.pressed {
   background: var(--green-press);
   transform: scale(0.97);

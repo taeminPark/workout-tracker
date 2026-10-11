@@ -331,6 +331,12 @@ function backIntoPreviousSet() {
   render();
 }
 
+function endEarly() {
+  S.targetSets = S.sets.length; // drop the unstarted remaining sets
+  S.screen = "summary";
+  render();
+}
+
 function addExtraSet() {
   S.targetSets = S.sets.length + 1;
   startSet(S.sets.length, "append");
@@ -2372,6 +2378,11 @@ function renderFlow() {
       }><span id="draft-num">${value}</span><span class="unit">${unit}</span></div>
       ${controlHtml}
       <button class="confirm-btn" data-action="confirm-step">확인 ✓</button>
+      ${
+        S.flowMode === "append" && S.sets.length > 0
+          ? `<button class="end-early-btn" data-action="end-early">${S.sets.length}세트로 끝내기</button>`
+          : ""
+      }
     </div>
   `;
 
@@ -3343,6 +3354,9 @@ app.addEventListener("click", (e) => {
       break;
     case "edit-set":
       editSet(Number(el.dataset.i));
+      break;
+    case "end-early":
+      endEarly();
       break;
     case "add-set":
       addExtraSet();
