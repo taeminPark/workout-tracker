@@ -2238,12 +2238,20 @@ function renderHome() {
     `;
   }
 
-  const voiceCta = h`<button class="voice-cta-btn" data-action="open-voice-log">${ICON_MIC}음성으로 기록</button>`;
+  const jumpHtml = cats.length
+    ? h`
+      <div class="jump-box">
+        <h3>오늘 무슨 운동?</h3>
+        <div class="jump-chips">${cats
+          .map((c) => `<button class="jump-chip" data-action="jump-cat" data-cat="${esc(c)}">${esc(c)}</button>`)
+          .join("")}</div>
+      </div>`
+    : "";
 
   const lastByEx = lastEntries(logs);
   let gridHtml = "";
   cats.forEach((cat) => {
-    gridHtml += `<div class="category-label">${esc(cat)}</div>`;
+    gridHtml += `<div class="category-label" data-cat="${esc(cat)}">${esc(cat)}</div>`;
     exercises
       .filter((e) => e.cat === cat)
       .forEach((e) => {
@@ -2283,8 +2291,8 @@ function renderHome() {
       <button class="iconbtn" data-action="settings" aria-label="설정">${ICON_GEAR}</button>
     </header>
     ${weeklyGoalHtml(logs, settings)}
+    ${jumpHtml}
     ${restBannerHtml()}
-    ${voiceCta}
     ${todayHtml}
     <div class="grid">${routinesSectionHtml()}${gridHtml}</div>
     <p class="home-tip">종목 버튼을 길게 누르면 성장 그래프를 볼 수 있어요.</p>
@@ -3461,6 +3469,14 @@ app.addEventListener("click", (e) => {
     case "resume-workout":
       resumeWorkout();
       break;
+    case "jump-cat": {
+      const label = [...document.querySelectorAll(".grid .category-label")].find((l) => l.dataset.cat === el.dataset.cat);
+      if (label) {
+        const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        label.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+      }
+      break;
+    }
     case "toggle-today":
       S.todayCollapsed = !S.todayCollapsed;
       render();

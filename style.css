@@ -129,7 +129,7 @@ body {
 /* ---------- fonts: same pairing as matjip-map (Pretendard body, Paperlogy headings) ---------- */
 
 button, input, textarea, select { font-family: inherit; }
-.topbar h1, .home-header h1, .category-label, .today-box h3, .coach-teaser h3,
+.topbar h1, .home-header h1, .category-label, .today-box h3, .jump-box h3, .coach-teaser h3,
 .cal-month-label {
   font-family: "Paperlogy", "Pretendard", -apple-system, sans-serif;
 }
@@ -208,6 +208,31 @@ button, input, textarea, select { font-family: inherit; }
   padding-left: 2px;
 }
 .category-label:first-child { margin-top: 0; }
+.category-label { scroll-margin-top: calc(env(safe-area-inset-top, 0px) + 14px); }
+
+/* 오늘 무슨 운동? — tapping a 부위 chip scrolls to that category */
+.jump-box {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 14px 14px 16px;
+  margin-bottom: 14px;
+}
+.jump-box h3 { margin: 0 0 12px; font-size: 17px; font-weight: 700; color: var(--text); }
+.jump-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.jump-chip {
+  min-height: 44px;
+  padding: 0 16px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: var(--text);
+  color: var(--bg);
+  font-size: 16px;
+  font-weight: 700;
+  transition: transform var(--fast), opacity var(--fast);
+}
+.jump-chip:active { transform: scale(0.95); opacity: 0.8; }
+.jump-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .big-btn {
   background: var(--bg-elev);

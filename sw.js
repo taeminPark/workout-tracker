@@ -1,4 +1,4 @@
-const CACHE = "wt-cache-v34";
+const CACHE = "wt-cache-v35";
 const ASSETS = [
   "./",
   "./index.html",
