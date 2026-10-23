@@ -2238,17 +2238,45 @@ function renderHome() {
     `;
   }
 
-  const jumpHtml = cats.length
-    ? h`
-      <div class="jump-box">
-        <h3>오늘 무슨 운동?</h3>
-        <div class="jump-chips">${cats
-          .map((c) => `<button class="jump-chip" data-action="jump-cat" data-cat="${esc(c)}">${esc(c)}</button>`)
-          .join("")}</div>
-      </div>`
-    : "";
-
   const lastByEx = lastEntries(logs);
+
+  // 오늘 무슨 운동? — recommend the 부위 rested longest; 부위 never logged only win when nothing is logged yet
+  let jumpHtml = "";
+  if (cats.length) {
+    const lastByCat = {};
+    exercises.forEach((e) => {
+      const last = lastByEx[e.id];
+      if (last && (!lastByCat[e.cat] || last.date > lastByCat[e.cat].date)) lastByCat[e.cat] = { ...last, name: e.name };
+    });
+    const pick = cats.reduce((best, c) => {
+      const d = lastByCat[c] && lastByCat[c].date;
+      const bd = lastByCat[best] && lastByCat[best].date;
+      return d && (!bd || d < bd) ? c : best;
+    }, cats.find((c) => lastByCat[c]) || cats[0]);
+    const last = lastByCat[pick];
+    let sub = "";
+    if (last) {
+      const ago = daysAgoLabel(last.date);
+      const rest = ago.endsWith("일 전") ? `${ago.slice(0, -2)} 쉬었어요.` : `${ago} 했어요.`;
+      sub = `${rest} 지난번 ${last.name} ${last.noWeight ? `${last.reps}회` : `${last.weight}kg`}`;
+    }
+    const others = cats.filter((c) => c !== pick);
+    jumpHtml = h`
+      <div class="jump-box">
+        <div class="jump-q">오늘 무슨 운동?</div>
+        <h3>오늘은 ${esc(pick)} 어때요?</h3>
+        ${sub ? `<p class="jump-sub">${esc(sub)}</p>` : ""}
+        <button class="jump-go" data-action="jump-cat" data-cat="${esc(pick)}">${esc(pick)} 운동 보기</button>
+      </div>
+      ${
+        others.length
+          ? `<div class="jump-chips">${others
+              .map((c) => `<button class="jump-chip" data-action="jump-cat" data-cat="${esc(c)}">${esc(c)}</button>`)
+              .join("")}</div>`
+          : ""
+      }`;
+  }
+
   let gridHtml = "";
   cats.forEach((cat) => {
     gridHtml += `<div class="category-label" data-cat="${esc(cat)}">${esc(cat)}</div>`;
