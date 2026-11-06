@@ -1868,6 +1868,8 @@ label.noweight-check {
 .cel-week span { margin-left: 4px; }
 .cel-ok { margin-top: auto; background: var(--accent); color: #fff; }
 .cel-ok:active, .cel-ok.pressed { background: var(--accent-press); }
+.cel-send { display: block; width: 100%; padding: 12px; text-align: center; font-size: 15px; font-weight: 700; color: var(--accent); text-decoration: none; border-radius: var(--r-md); }
+.cel-send:active { background: var(--fill); }
 .celebrate .st { animation: cel-rise 420ms var(--ease-out) both; animation-delay: calc(var(--d) * 70ms + 1100ms); }
 
 @keyframes cel-fade { from { opacity: 0; } }

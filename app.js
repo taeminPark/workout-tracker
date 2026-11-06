@@ -1272,18 +1272,47 @@ function weeklyGoalHtml(logs, settings) {
   `;
 }
 
-// "가슴, 팔, 복근 운동" — 종목설정의 부위(cat)를 기록 순서대로 중복 없이
-function partsSummaryHtml(entries) {
-  const exercises = getExercises();
-  const parts = [
+// 종목설정의 부위(cat)를 기록 순서대로 중복 없이
+function partsOf(entries, exercises = getExercises()) {
+  return [
     ...new Set(
       entries
         .map((e) => (exercises.find((x) => x.id === e.exerciseId) || exercises.find((x) => x.name === e.exerciseName) || {}).cat)
         .filter(Boolean)
     ),
   ];
+}
+
+// "가슴, 팔, 복근 운동"
+function partsSummaryHtml(entries) {
+  const parts = partsOf(entries);
   if (!parts.length) return "";
   return `<div class="parts-summary">${parts.map((c) => `<b>${esc(c)}</b>`).join(", ")} 운동</div>`;
+}
+
+/* ---------- 대시보드로 보내기 ---------- */
+
+// 기록은 이 폰에만 있어서, 최근 2주 요약을 대시보드 주소의 # 뒤에 실어 연다(# 뒤는 서버로 가지 않는다)
+const DASHBOARD_URL = "https://dash.158-247-213-194.sslip.io/";
+function dashboardLink() {
+  const logs = getLogs();
+  const exercises = getExercises();
+  const days = [];
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const key = dateKey(d);
+    const list = logs[key] || [];
+    if (!list.length) continue;
+    days.push({
+      d: key,
+      p: partsOf(list, exercises),
+      s: list.reduce((n, e) => n + e.sets.length, 0),
+      v: list.reduce((n, e) => n + (e.noWeight ? 0 : e.sets.reduce((m, x) => m + x.weight * x.reps, 0)), 0),
+    });
+  }
+  const goal = Math.min(7, Math.max(1, Number(getSettings().weeklyGoal) || 3));
+  return `${DASHBOARD_URL}#orum=${encodeURIComponent(JSON.stringify({ v: 1, goal, at: Date.now(), days }))}`;
 }
 
 /* ---------- 운동 끝 (finish the day) ---------- */
@@ -1404,6 +1433,7 @@ function showFinishCelebration(sum) {
       ${pr ? `<div class="cel-prs st" style="--d:4">${prRows}</div>` : ""}
       <div class="cel-week st" style="--d:5">${dots}<span>${weekText}</span></div>
       <button class="confirm-btn cel-ok st" style="--d:6" type="button">확인</button>
+      <a class="cel-send st" style="--d:6" href="${dashboardLink()}" target="_blank" rel="noopener">대시보드로 보내기</a>
     </div>
   `;
   // tapping anywhere closes it, even mid-animation
